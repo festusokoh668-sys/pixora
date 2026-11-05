@@ -1,0 +1,6 @@
+{
+  "name": "Silvester — Creative Drawing & Tracing Studio",
+  "description": "A beautiful, mobile-first interactive drawing and tracing studio with templates, custom brushes, palettes, and artwork export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

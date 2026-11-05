@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --brand-blue: #164BCE;
+    --brand-royal-blue: #164BCE;
+    --brand-sapphire: #2563EB;
+    --brand-deep: #0D2D82;
+    --brand-slate: #0F172A;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    background: radial-gradient(circle at 10% 15%, rgba(22, 75, 206, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 90% 85%, rgba(30, 64, 175, 0.18) 0%, transparent 50%),
+                linear-gradient(135deg, #FFFFFF 0%, #F0F6FF 35%, #E0EDFD 70%, #C7DFFE 100%);
+    background-attachment: fixed;
+    color: #0F172A;
+  }
+}
+
+.font-bold-brand {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.font-wordmark {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+/* Glitter animations for the Start Creating button */
+@keyframes glitter-sweep {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes glitter-sheen {
+  0% {
+    transform: translateX(-150%) skewX(-20deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(250%) skewX(-20deg);
+    opacity: 0;
+  }
+}
+
+@keyframes glitter-twinkle {
+  0%, 100% {
+    opacity: 0.15;
+    transform: scale(0.6) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.25) rotate(180deg);
+  }
+}
+
+.btn-glitter {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(110deg, #164BCE 0%, #2563EB 25%, #60A5FA 45%, #FFFFFF 52%, #60A5FA 58%, #2563EB 75%, #164BCE 100%);
+  background-size: 240% 100%;
+  animation: glitter-sweep 3.5s ease-in-out infinite;
+}
+
+.btn-glitter::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.65) 50%, transparent 100%);
+  animation: glitter-sheen 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+.sparkle-star {
+  animation: glitter-twinkle 2s ease-in-out infinite;
+}
+
+/* Custom scrollbars for clean light aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Drawing canvas protection */
+.drawing-surface {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
