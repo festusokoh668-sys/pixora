@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Search, Check, Layers, Image as ImageIcon, Video, Upload, Loader2, Sparkles, Globe, ShieldAlert, Award } from 'lucide-react';
-import { DrawingTemplate, DifficultyLevel } from '../types';
-import { TEMPLATES } from '../data/templates';
+import { DrawingTemplate, DifficultyLevel, DrawingCollection } from '../types';
+import { TEMPLATES, DRAWING_COLLECTIONS } from '../data/templates';
 import { searchRealPhotoTemplates } from '../utils/mediaSearch';
 import { generateFallbackSvgDataUrl } from '../utils/edgeDetection';
 
@@ -27,6 +27,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [collectionActiveLevel, setCollectionActiveLevel] = useState<Record<string, 'Easy' | 'Medium' | 'Hard'>>({});
   const [liveSearchResults, setLiveSearchResults] = useState<DrawingTemplate[]>([]);
   const [isSearchingOnline, setIsSearchingOnline] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -108,8 +109,42 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
     onClose();
   };
 
-  // 1. Local filtered templates
-  const localFilteredTemplates = TEMPLATES.filter((tpl) => {
+  // 1. Filter the 8 Drawing Collections (each having Easy, Medium, Hard)
+  const filteredCollections = DRAWING_COLLECTIONS.filter((col) => {
+    let matchesCategory = true;
+    if (selectedFilter === 'photos') {
+      matchesCategory = true; // All 8 collections are real image paint books
+    } else if (selectedFilter !== 'all') {
+      matchesCategory = col.category === selectedFilter;
+    }
+
+    let matchesDifficulty = true;
+    if (selectedDifficulty !== 'all') {
+      matchesDifficulty =
+        selectedDifficulty === 'Easy' ||
+        selectedDifficulty === 'Medium' ||
+        selectedDifficulty === 'Hard';
+    }
+
+    if (!searchQuery.trim()) return matchesCategory && matchesDifficulty;
+
+    const q = searchQuery.toLowerCase().trim();
+    const matchesQuery =
+      col.title.toLowerCase().includes(q) ||
+      col.description.toLowerCase().includes(q) ||
+      col.category.toLowerCase().includes(q) ||
+      (col.tags && col.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+      col.levels.Easy.name.toLowerCase().includes(q) ||
+      col.levels.Medium.name.toLowerCase().includes(q) ||
+      col.levels.Hard.name.toLowerCase().includes(q);
+
+    return matchesCategory && matchesDifficulty && matchesQuery;
+  });
+
+  // 2. Filter other templates (excluding the 24 collection templates so they aren't shown twice)
+  const localOtherTemplates = TEMPLATES.filter((tpl) => {
+    if (tpl.collectionId) return false;
+
     let matchesCategory = true;
     if (selectedFilter === 'photos') {
       matchesCategory = tpl.type === 'photo' || tpl.type === 'video';
@@ -134,9 +169,9 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
     return matchesCategory && matchesDifficulty && matchesQuery;
   });
 
-  // 2. Combine local matches and live online search results
-  const combinedTemplates: DrawingTemplate[] = [...localFilteredTemplates];
-  const seenNames = new Set(localFilteredTemplates.map((t) => t.name.toLowerCase()));
+  // 3. Online search results
+  const combinedOtherTemplates: DrawingTemplate[] = [...localOtherTemplates];
+  const seenNames = new Set(localOtherTemplates.map((t) => t.name.toLowerCase()));
 
   for (const liveTpl of liveSearchResults) {
     let matchesDifficulty = true;
@@ -146,9 +181,11 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
 
     if (matchesDifficulty && !seenNames.has(liveTpl.name.toLowerCase())) {
       seenNames.add(liveTpl.name.toLowerCase());
-      combinedTemplates.push(liveTpl);
+      combinedOtherTemplates.push(liveTpl);
     }
   }
+
+  const totalResultsCount = filteredCollections.length + combinedOtherTemplates.length;
 
   // Helper for difficulty badge styling
   const renderDifficultyBadge = (difficulty: DifficultyLevel) => {
@@ -347,7 +384,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                   </span>
                 ) : (
                   <span>
-                    Found web pictures for <strong className="text-blue-700 font-bold">"{searchQuery}"</strong> ({combinedTemplates.length} results)
+                    Found web pictures for <strong className="text-blue-700 font-bold">"{searchQuery}"</strong> ({totalResultsCount} results)
                   </span>
                 )}
               </span>
@@ -381,9 +418,129 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
             </div>
           </button>
 
-          {/* Templates Display */}
-          {combinedTemplates.map((template) => {
+          {/* 8 Drawing Collections Display (Easy, Medium, Hard) */}
+          {filteredCollections.map((col) => {
+            const activeLevel: 'Easy' | 'Medium' | 'Hard' =
+              selectedDifficulty === 'Easy' || selectedDifficulty === 'Medium' || selectedDifficulty === 'Hard'
+                ? selectedDifficulty
+                : collectionActiveLevel[col.id] || 'Easy';
+
+            const currentTemplate = col.levels[activeLevel];
+            const isSelected = activeTemplate?.id === currentTemplate.id;
+            const isCollectionActive =
+              activeTemplate?.id === col.levels.Easy.id ||
+              activeTemplate?.id === col.levels.Medium.id ||
+              activeTemplate?.id === col.levels.Hard.id;
+
+            const safeUrl = currentTemplate.mediaUrl?.startsWith('data:')
+              ? currentTemplate.mediaUrl
+              : currentTemplate.mediaUrl
+              ? encodeURI(decodeURI(currentTemplate.mediaUrl))
+              : '';
+
+            return (
+              <div
+                key={col.id}
+                onClick={() => {
+                  onSelectTemplate(currentTemplate);
+                  onClose();
+                }}
+                className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all group cursor-pointer relative overflow-hidden bg-white ${
+                  isCollectionActive
+                    ? 'border-blue-600 ring-2 ring-blue-500/30 bg-blue-50/20 shadow-md'
+                    : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
+                }`}
+              >
+                {/* Media Preview Box */}
+                <div className="w-full h-28 mb-2 rounded-xl overflow-hidden bg-slate-100 relative flex items-center justify-center border border-slate-200">
+                  {safeUrl ? (
+                    <img
+                      src={safeUrl}
+                      alt={`${col.title} (${activeLevel})`}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform duration-300"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        target.onerror = null;
+                        target.src = generateFallbackSvgDataUrl(col.title);
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-xs">
+                      {col.title}
+                    </div>
+                  )}
+
+                  {/* Selected Checkmark Badge */}
+                  {isSelected && (
+                    <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
+                      <Check className="w-3.5 h-3.5" />
+                    </div>
+                  )}
+
+                  {/* Category Pill Tag */}
+                  <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-white/95 backdrop-blur-sm text-[9px] font-bold text-slate-700 uppercase tracking-wider shadow-sm border border-slate-200/60">
+                    {col.category}
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-1 mb-1">
+                    <span className="text-xs font-bold text-slate-900 truncate" title={col.title}>
+                      {col.title}
+                    </span>
+                    {renderDifficultyBadge(activeLevel)}
+                  </div>
+
+                  {/* Easy, Medium, Hard Difficulty Level Selectors */}
+                  <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center gap-1">
+                    {(['Easy', 'Medium', 'Hard'] as const).map((lvl) => {
+                      const isThisLevelActive = activeLevel === lvl;
+                      const isThisLevelSelected = activeTemplate?.id === col.levels[lvl].id;
+                      return (
+                        <button
+                          key={lvl}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectTemplate(col.levels[lvl]);
+                            onClose();
+                          }}
+                          onMouseEnter={() => {
+                            setCollectionActiveLevel((prev) => ({ ...prev, [col.id]: lvl }));
+                          }}
+                          className={`flex-1 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer text-center select-none ${
+                            isThisLevelSelected
+                              ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-500'
+                              : isThisLevelActive
+                              ? lvl === 'Easy'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black'
+                                : lvl === 'Medium'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-300 font-black'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300 font-black'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                          }`}
+                          title={`Trace ${col.title} (${lvl})`}
+                        >
+                          {lvl}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Other Templates Display */}
+          {combinedOtherTemplates.map((template) => {
             const isSelected = activeTemplate?.id === template.id;
+            const safeUrl = template.mediaUrl?.startsWith('data:')
+              ? template.mediaUrl
+              : template.mediaUrl
+              ? encodeURI(decodeURI(template.mediaUrl))
+              : '';
+
             return (
               <button
                 key={template.id}
@@ -399,21 +556,21 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
               >
                 {/* Media Preview Box */}
                 <div className="w-full h-28 mb-2 rounded-xl overflow-hidden bg-slate-100 relative flex items-center justify-center border border-slate-200">
-                  {template.mediaUrl && template.type !== 'video' ? (
+                  {safeUrl && template.type !== 'video' ? (
                     <img
-                      src={template.mediaUrl}
+                      src={safeUrl}
                       alt={template.name}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform duration-300"
                       onError={(e) => {
                         const target = e.currentTarget;
-                        target.onerror = null; // prevent loop
+                        target.onerror = null;
                         target.src = generateFallbackSvgDataUrl(template.name);
                       }}
                     />
-                  ) : template.type === 'video' && template.mediaUrl ? (
+                  ) : template.type === 'video' && safeUrl ? (
                     <video
-                      src={template.mediaUrl}
+                      src={safeUrl}
                       muted
                       className="w-full h-full object-cover"
                     />

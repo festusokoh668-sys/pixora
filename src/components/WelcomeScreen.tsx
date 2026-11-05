@@ -1,6 +1,6 @@
 import React from 'react';
 import { ArrowRight, Image as ImageIcon, Sparkles, Feather, Pencil, Brush, Compass } from 'lucide-react';
-import { REAL_MEDIA_TEMPLATES } from '../data/templates';
+import { DRAWING_COLLECTIONS } from '../data/templates';
 import { DrawingTemplate, DifficultyLevel } from '../types';
 
 interface WelcomeScreenProps {
@@ -106,38 +106,47 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               Choose a Paint Book to Trace
             </span>
           </div>
-          <span className="text-[11px] text-blue-700 font-bold">8 Real Photo Templates</span>
+          <span className="text-[11px] text-blue-700 font-bold">8 Drawing Collections · 24 Stencils</span>
         </div>
 
         {/* Real Picture Paint Books Grid */}
         <div className="w-full max-w-4xl">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-            {REAL_MEDIA_TEMPLATES.map((template) => (
-              <button
-                key={template.id}
-                onClick={() => onSelectTemplateDirectly(template)}
-                className="group relative aspect-square rounded-2xl overflow-hidden bg-white border-2 border-blue-200/70 hover:border-blue-500 shadow-md hover:shadow-xl transition-all duration-300 active:scale-95 text-left cursor-pointer"
-                title={`Start tracing ${template.name}`}
-              >
-                {template.mediaUrl && (
-                  <img
-                    src={template.mediaUrl}
-                    alt={template.name}
-                    className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-500"
-                  />
-                )}
-                {/* Gradient Scrim for readable title */}
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent" />
-                <div className="absolute bottom-2.5 left-2.5 right-2.5">
-                  <span className="text-xs sm:text-sm font-black text-white block truncate drop-shadow-sm">
-                    {template.name}
-                  </span>
-                  <div className="flex items-center justify-end text-[10px] text-blue-200 mt-0.5">
-                    {renderDifficultyBadge(template.difficulty)}
+            {DRAWING_COLLECTIONS.map((col) => {
+              const template = col.levels.Easy;
+              const safeUrl = template.mediaUrl?.startsWith('data:')
+                ? template.mediaUrl
+                : template.mediaUrl
+                ? encodeURI(decodeURI(template.mediaUrl))
+                : '';
+              return (
+                <button
+                  key={col.id}
+                  onClick={() => onSelectTemplateDirectly(template)}
+                  className="group relative aspect-square rounded-2xl overflow-hidden bg-white border-2 border-blue-200/70 hover:border-blue-500 shadow-md hover:shadow-xl transition-all duration-300 active:scale-95 text-left cursor-pointer"
+                  title={`Start tracing ${col.title} (${template.difficulty})`}
+                >
+                  {safeUrl && (
+                    <img
+                      src={safeUrl}
+                      alt={col.title}
+                      className="w-full h-full object-contain p-2 group-hover:scale-108 transition-transform duration-500 bg-slate-50"
+                    />
+                  )}
+                  {/* Gradient Scrim for readable title */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent" />
+                  <div className="absolute bottom-2.5 left-2.5 right-2.5">
+                    <span className="text-xs sm:text-sm font-black text-white block truncate drop-shadow-sm">
+                      {col.title}
+                    </span>
+                    <div className="flex items-center justify-between text-[10px] text-blue-200 mt-0.5">
+                      <span className="text-[9px] uppercase font-bold tracking-wider text-slate-300">{col.category}</span>
+                      {renderDifficultyBadge(template.difficulty)}
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </div>
       </main>

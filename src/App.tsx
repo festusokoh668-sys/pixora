@@ -36,6 +36,7 @@ export default function App() {
 
   // Templates & Tracing
   const [activeTemplate, setActiveTemplate] = useState<DrawingTemplate | null>(null);
+  const [lastClosedTemplate, setLastClosedTemplate] = useState<DrawingTemplate | null>(null);
   const [templateOpacity, setTemplateOpacity] = useState<number>(0.35);
 
   // Saved Artworks (Session Gallery)
@@ -122,6 +123,29 @@ export default function App() {
     setStrokes([]);
     updateHistoryFlags();
     showToast('Canvas cleared');
+  };
+
+  // Tracing Paint Book selection, close, and undo-close / restore handlers
+  const handleCloseTemplate = () => {
+    if (activeTemplate) {
+      setLastClosedTemplate(activeTemplate);
+      setActiveTemplate(null);
+    }
+  };
+
+  const handleRestoreTemplate = () => {
+    if (lastClosedTemplate) {
+      const templateToRestore = lastClosedTemplate;
+      setActiveTemplate(templateToRestore);
+      setLastClosedTemplate(null);
+      showToast(`Restored: ${templateToRestore.name}`);
+    }
+  };
+
+  const handleSelectTemplate = (template: DrawingTemplate) => {
+    setActiveTemplate(template);
+    setLastClosedTemplate(null);
+    showToast(`Tracing: ${template.name}`);
   };
 
   // Toast trigger
@@ -234,7 +258,7 @@ export default function App() {
         <WelcomeScreen
           onStartCreating={() => setCurrentView('studio')}
           onSelectTemplateDirectly={(tpl) => {
-            setActiveTemplate(tpl);
+            handleSelectTemplate(tpl);
             setCurrentView('studio');
           }}
         />
@@ -270,10 +294,12 @@ export default function App() {
               strokes={strokes}
               onStrokesChange={handleStrokesChange}
               activeTemplate={activeTemplate}
+              lastClosedTemplate={lastClosedTemplate}
               templateOpacity={templateOpacity}
               onTemplateOpacityChange={setTemplateOpacity}
               onOpenTemplates={() => setIsTemplateModalOpen(true)}
-              onClearTemplate={() => setActiveTemplate(null)}
+              onClearTemplate={handleCloseTemplate}
+              onRestoreTemplate={handleRestoreTemplate}
             />
           </main>
 
@@ -296,12 +322,9 @@ export default function App() {
             isOpen={isTemplateModalOpen}
             onClose={() => setIsTemplateModalOpen(false)}
             activeTemplate={activeTemplate}
-            onSelectTemplate={(tpl) => {
-              setActiveTemplate(tpl);
-              showToast(`Tracing: ${tpl.name}`);
-            }}
+            onSelectTemplate={handleSelectTemplate}
             onClearTemplate={() => {
-              setActiveTemplate(null);
+              handleCloseTemplate();
               showToast('Blank canvas enabled');
             }}
             templateOpacity={templateOpacity}

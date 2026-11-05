@@ -38,6 +38,21 @@ export interface DrawingTemplate {
   viewBox?: string;
   description: string;
   tags?: string[];
+  collectionId?: string;
+  collectionTitle?: string;
+}
+
+export interface DrawingCollection {
+  id: string;
+  title: string;
+  category: TemplateCategory;
+  description: string;
+  tags?: string[];
+  levels: {
+    Easy: DrawingTemplate;
+    Medium: DrawingTemplate;
+    Hard: DrawingTemplate;
+  };
 }
 
 export interface SavedArtwork {

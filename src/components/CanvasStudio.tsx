@@ -19,10 +19,12 @@ interface CanvasStudioProps {
   strokes: Stroke[];
   onStrokesChange: (newStrokes: Stroke[]) => void;
   activeTemplate: DrawingTemplate | null;
+  lastClosedTemplate?: DrawingTemplate | null;
   templateOpacity: number;
   onTemplateOpacityChange: (opacity: number) => void;
   onOpenTemplates: () => void;
   onClearTemplate: () => void;
+  onRestoreTemplate?: () => void;
 }
 
 export const CanvasStudio: React.FC<CanvasStudioProps> = ({
@@ -33,10 +35,12 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
   strokes,
   onStrokesChange,
   activeTemplate,
+  lastClosedTemplate,
   templateOpacity,
   onTemplateOpacityChange,
   onOpenTemplates,
   onClearTemplate,
+  onRestoreTemplate,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -119,7 +123,10 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
       }
     };
 
-    img.src = activeTemplate.mediaUrl;
+    const safeUrl = activeTemplate.mediaUrl.startsWith('data:')
+      ? activeTemplate.mediaUrl
+      : encodeURI(decodeURI(activeTemplate.mediaUrl));
+    img.src = safeUrl;
 
     return () => {
       isSubscribed = false;
@@ -437,6 +444,31 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
           </div>
         )}
 
+        {/* Undo Close – Restore Paint Book Button when template was closed */}
+        {!activeTemplate && lastClosedTemplate && onRestoreTemplate && (
+          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-auto animate-in fade-in slide-in-from-top-1 duration-150">
+            <button
+              onClick={onRestoreTemplate}
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-white/95 hover:bg-white text-blue-700 hover:text-blue-800 border-2 border-blue-400/90 shadow-[0_4px_16px_rgba(22,75,206,0.18)] hover:shadow-[0_6px_20px_rgba(22,75,206,0.25)] text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-md"
+              title={`Restore ${lastClosedTemplate.name} (${lastClosedTemplate.difficulty})`}
+            >
+              <span className="text-sm font-black text-blue-600 leading-none">↶</span>
+              <span className="whitespace-nowrap">Undo Close – Restore Paint Book</span>
+              <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 ml-1 border border-blue-200 truncate max-w-[140px]">
+                {lastClosedTemplate.name}
+              </span>
+            </button>
+
+            {/* Quick Switch Template Button */}
+            <button
+              onClick={onOpenTemplates}
+              className="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 hover:border-blue-400 shadow-md text-[11px] font-bold text-slate-700 hover:text-blue-600 transition-colors cursor-pointer"
+            >
+              Paint Books
+            </button>
+          </div>
+        )}
+
         {/* Template Opacity & Outline Sensitivity Popover */}
         {activeTemplate && showOpacitySlider && (
           <div className="absolute top-14 left-4 z-30 p-3.5 rounded-2xl bg-white/98 backdrop-blur-md border border-slate-200 shadow-xl flex flex-col gap-3 w-64 text-xs text-slate-800">
@@ -519,11 +551,11 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
               {/* 1. Underlying Real Picture Base (Ensures picture NEVER disappears) */}
               {activeTemplate.mediaUrl && activeTemplate.type !== 'video' && (
                 <img
-                  src={activeTemplate.mediaUrl}
+                  src={activeTemplate.mediaUrl.startsWith('data:') ? activeTemplate.mediaUrl : encodeURI(decodeURI(activeTemplate.mediaUrl))}
                   alt={activeTemplate.name}
                   crossOrigin="anonymous"
                   referrerPolicy="no-referrer"
-                  className={`absolute inset-0 w-full h-full object-cover select-none transition-all duration-200 ${
+                  className={`absolute inset-0 w-full h-full object-contain select-none transition-all duration-200 ${
                     traceMode === 'outline'
                       ? 'opacity-40 filter contrast(110%)'
                       : traceMode === 'grayscale'
@@ -546,7 +578,7 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                   loop
                   muted
                   playsInline
-                  className="absolute inset-0 w-full h-full object-cover select-none"
+                  className="absolute inset-0 w-full h-full object-contain select-none"
                 />
               )}
 
@@ -557,7 +589,7 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                     <img
                       src={processedTraceUrl}
                       alt={`${activeTemplate.name} Outline Trace`}
-                      className="w-full h-full object-cover select-none mix-blend-multiply"
+                      className="w-full h-full object-contain select-none mix-blend-multiply"
                     />
                   ) : activeTemplate.svgPath ? (
                     <div className="w-full h-full p-6 flex items-center justify-center">
