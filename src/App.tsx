@@ -268,10 +268,6 @@ export default function App() {
       {currentView === 'welcome' ? (
         <WelcomeScreen
           onStartCreating={handleStartFreshCanvas}
-          onSelectTemplateDirectly={(tpl) => {
-            handleSelectTemplate(tpl);
-            setCurrentView('studio');
-          }}
         />
       ) : (
         <div className="flex-1 flex flex-col h-screen overflow-hidden">

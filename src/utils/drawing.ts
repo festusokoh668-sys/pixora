@@ -1,4 +1,5 @@
 import { Point, Stroke, ToolType } from '../types';
+import { floodFill } from './floodFill';
 
 /**
  * Converts screen/pointer coordinates into canvas internal pixel coordinates
@@ -181,6 +182,31 @@ export function applyToolStyleToContext(
     ctx.globalAlpha = stroke.opacity;
     ctx.shadowBlur = 0;
   }
+}
+
+/**
+ * Renders a complete stroke to a canvas context, delegating flood fills
+ * to the floodFill algorithm and standard strokes to quadratic bezier paths.
+ */
+export function renderStrokeToContext(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke,
+  mode: 'canvas' | 'export' = 'canvas'
+): void {
+  if (stroke.points.length === 0) return;
+
+  if (stroke.tool === 'bucket') {
+    const pt = stroke.points[0];
+    if (pt) {
+      floodFill(ctx, pt.x, pt.y, stroke.color, stroke.opacity);
+    }
+    return;
+  }
+
+  ctx.save();
+  applyToolStyleToContext(ctx, stroke, mode);
+  drawQuadraticPath(ctx, stroke.points);
+  ctx.restore();
 }
 
 /**

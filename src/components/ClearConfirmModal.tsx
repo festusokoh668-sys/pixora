@@ -18,12 +18,16 @@ export const ClearConfirmModal: React.FC<ClearConfirmModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-150"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-150 cursor-pointer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="clear-canvas-title"
     >
-      <div className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl shadow-2xl p-5 flex flex-col text-slate-800">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm bg-white border border-slate-200 rounded-3xl shadow-2xl p-5 flex flex-col text-slate-800 cursor-default"
+      >
         <div className="flex items-start justify-between mb-4">
           <div className="w-10 h-10 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center text-red-500">
             <AlertTriangle className="w-5 h-5" />

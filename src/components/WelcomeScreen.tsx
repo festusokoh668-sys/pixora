@@ -1,35 +1,14 @@
 import React from 'react';
-import { ArrowRight, Image as ImageIcon, Sparkles, Feather, Pencil, Brush, Compass } from 'lucide-react';
-import { DRAWING_COLLECTIONS } from '../data/templates';
-import { DrawingTemplate, DifficultyLevel } from '../types';
+import { ArrowRight, Sparkles } from 'lucide-react';
+import { DrawingTemplate } from '../types';
 
 interface WelcomeScreenProps {
   onStartCreating: () => void;
-  onSelectTemplateDirectly: (template: DrawingTemplate) => void;
+  onSelectTemplateDirectly?: (template: DrawingTemplate) => void;
 }
-
-const renderDifficultyBadge = (difficulty: DifficultyLevel) => {
-  switch (difficulty) {
-    case 'Easy':
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">Easy</span>;
-    case 'Medium':
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-300">Medium</span>;
-    case 'Hard':
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-100 text-amber-900 border border-amber-300">Hard</span>;
-    case 'Pro':
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-300">Pro</span>;
-    case 'Mastery':
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-rose-100 text-rose-800 border border-rose-300">Mastery</span>;
-    case 'Legend':
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-400 text-slate-950 border border-amber-500 shadow-sm">★ Legend</span>;
-    default:
-      return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-slate-100 text-slate-700">{difficulty}</span>;
-  }
-};
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   onStartCreating,
-  onSelectTemplateDirectly,
 }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-blue-50/80 to-blue-200/50 text-slate-900 flex flex-col justify-between relative overflow-hidden select-none">
@@ -66,7 +45,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       </nav>
 
       {/* Main Hero & Welcome Content */}
-      <main className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10 flex flex-col items-center text-center z-10 my-auto">
+      <main className="w-full max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-20 flex flex-col items-center text-center z-10 my-auto">
         <h1 className="font-black text-6xl sm:text-8xl md:text-9xl uppercase tracking-tight text-slate-950 drop-shadow-[0_4px_30px_rgba(22,75,206,0.18)] mb-3 font-sans">
           PIX<span className="text-[#164BCE]">ORA</span>
         </h1>
@@ -75,9 +54,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           Your Imagination. Your Canvas.
         </h2>
         <p className="max-w-xl text-slate-600 text-sm sm:text-base font-medium leading-relaxed mb-8">
-          Relax, draw, trace and bring your imagination to life with real photo paint books and custom precision tools.
+          Relax, draw, trace and bring your imagination to life with precision drawing tools and real paint books.
         </p>
-        <div className="w-full sm:w-auto flex flex-col items-center justify-center gap-3 mb-10">
+
+        <div className="w-full sm:w-auto flex flex-col items-center justify-center gap-3">
           <button
             onClick={onStartCreating}
             className="btn-glitter w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl text-white font-black text-base sm:text-lg shadow-[0_12px_35px_rgba(22,75,206,0.38)] hover:shadow-[0_16px_45px_rgba(22,75,206,0.5)] border border-white/70 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative"
@@ -96,58 +76,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           <span className="text-[11px] font-semibold text-slate-500">
             Instant freehand canvas · Smooth stroke stabilization
           </span>
-        </div>
-
-        {/* Real Picture Paint Books Showcase Header */}
-        <div className="w-full max-w-4xl flex items-center justify-between mb-3 px-1 text-left">
-          <div className="flex items-center gap-2">
-            <Compass className="w-4 h-4 text-blue-600" />
-            <span className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-slate-800">
-              Choose a Paint Book to Trace
-            </span>
-          </div>
-          <span className="text-[11px] text-blue-700 font-bold">8 Drawing Collections · 24 Stencils</span>
-        </div>
-
-        {/* Real Picture Paint Books Grid */}
-        <div className="w-full max-w-4xl">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-            {DRAWING_COLLECTIONS.map((col) => {
-              const template = col.levels.Easy;
-              const safeUrl = template.mediaUrl?.startsWith('data:')
-                ? template.mediaUrl
-                : template.mediaUrl
-                ? encodeURI(decodeURI(template.mediaUrl))
-                : '';
-              return (
-                <button
-                  key={col.id}
-                  onClick={() => onSelectTemplateDirectly(template)}
-                  className="group relative aspect-square rounded-2xl overflow-hidden bg-white border-2 border-blue-200/70 hover:border-blue-500 shadow-md hover:shadow-xl transition-all duration-300 active:scale-95 text-left cursor-pointer"
-                  title={`Start tracing ${col.title} (${template.difficulty})`}
-                >
-                  {safeUrl && (
-                    <img
-                      src={safeUrl}
-                      alt={col.title}
-                      className="w-full h-full object-contain p-2 group-hover:scale-108 transition-transform duration-500 bg-slate-50"
-                    />
-                  )}
-                  {/* Gradient Scrim for readable title */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent" />
-                  <div className="absolute bottom-2.5 left-2.5 right-2.5">
-                    <span className="text-xs sm:text-sm font-black text-white block truncate drop-shadow-sm">
-                      {col.title}
-                    </span>
-                    <div className="flex items-center justify-between text-[10px] text-blue-200 mt-0.5">
-                      <span className="text-[9px] uppercase font-bold tracking-wider text-slate-300">{col.category}</span>
-                      {renderDifficultyBadge(template.difficulty)}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         </div>
       </main>
 

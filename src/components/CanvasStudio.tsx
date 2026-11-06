@@ -8,6 +8,7 @@ import {
   smoothPoints,
   drawQuadraticPath,
   applyToolStyleToContext,
+  renderStrokeToContext,
 } from '../utils/drawing';
 import { generateOutlineTraceDataUrl, generateFallbackSvgDataUrl } from '../utils/edgeDetection';
 
@@ -109,6 +110,27 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
     setIsDraggingHud(false);
   };
 
+  const opacityPopoverRef = useRef<HTMLDivElement>(null);
+  const opacityButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Close Guide Opacity & Sensitivity popover when clicking outside
+  useEffect(() => {
+    if (!showOpacitySlider) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      if (
+        opacityPopoverRef.current &&
+        !opacityPopoverRef.current.contains(target) &&
+        opacityButtonRef.current &&
+        !opacityButtonRef.current.contains(target)
+      ) {
+        setShowOpacitySlider(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => document.removeEventListener('pointerdown', handleOutsideClick);
+  }, [showOpacitySlider]);
+
   // Resize canvas based on container dimensions
   useEffect(() => {
     const updateSize = () => {
@@ -183,11 +205,7 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
   };
 
   const drawStroke = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
-    if (stroke.points.length === 0) return;
-    ctx.save();
-    applyToolStyle(ctx, stroke);
-    drawQuadraticPath(ctx, stroke.points);
-    ctx.restore();
+    renderStrokeToContext(ctx, stroke, 'canvas');
   };
 
   // Render all strokes onto the canvas
@@ -235,6 +253,13 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
       canvasDimensions.width,
       canvasDimensions.height
     );
+
+    // Paint Bucket flood fill: instantly paints the enclosed area upon tap
+    if (tool === 'bucket') {
+      const fillStroke = createStroke('bucket', color, size, opacity, point);
+      onStrokesChange([...strokes, fillStroke]);
+      return;
+    }
 
     const newStroke = createStroke(tool, color, size, opacity, point);
     currentStrokeRef.current = newStroke;
@@ -444,6 +469,7 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
 
               {/* Opacity Adjustment */}
               <button
+                ref={opacityButtonRef}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -527,6 +553,7 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
               {/* Attached Opacity Popover (Moves together with the title block!) */}
               {showOpacitySlider && (
                 <div
+                  ref={opacityPopoverRef}
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   className="absolute top-full mt-2 left-0 z-40 p-3.5 rounded-2xl bg-white/98 backdrop-blur-md border border-slate-200 shadow-2xl flex flex-col gap-3 w-64 text-xs text-slate-800 cursor-default animate-in fade-in slide-in-from-top-1 duration-150"

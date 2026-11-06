@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Pencil,
   Brush,
@@ -40,6 +40,26 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 }) => {
   const [showSizeModal, setShowSizeModal] = useState<boolean>(false);
   const [showColorStudio, setShowColorStudio] = useState<boolean>(false);
+  const sizeModalRef = useRef<HTMLDivElement>(null);
+  const sizeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Close Brush Thickness popover when clicking outside
+  useEffect(() => {
+    if (!showSizeModal) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      if (
+        sizeModalRef.current &&
+        !sizeModalRef.current.contains(target) &&
+        sizeButtonRef.current &&
+        !sizeButtonRef.current.contains(target)
+      ) {
+        setShowSizeModal(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => document.removeEventListener('pointerdown', handleOutsideClick);
+  }, [showSizeModal]);
 
   // Clean, rock-solid tools without jitter or dynamic badges
   const tools: { id: ToolType; label: string; icon: React.ReactNode }[] = [
@@ -78,7 +98,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <div className="fixed bottom-0 left-0 right-0 z-40 w-full pointer-events-auto bg-white/95 backdrop-blur-xl border-t border-blue-200/90 shadow-[0_-8px_25px_rgba(22,75,206,0.12)] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1 px-2">
         {/* Brush Size Popover */}
         {showSizeModal && (
-          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 w-[92vw] max-w-xs p-4 rounded-2xl bg-white border border-slate-200 shadow-2xl flex flex-col gap-3.5 text-xs text-slate-800 z-50">
+          <div
+            ref={sizeModalRef}
+            className="absolute bottom-16 left-1/2 -translate-x-1/2 w-[92vw] max-w-xs p-4 rounded-2xl bg-white border border-slate-200 shadow-2xl flex flex-col gap-3.5 text-xs text-slate-800 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+          >
             <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
               <span className="font-bold text-slate-800">Brush Thickness</span>
               <button
@@ -193,6 +216,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
           {/* Size Button */}
           <button
+            ref={sizeButtonRef}
             onClick={() => {
               setShowSizeModal(!showSizeModal);
             }}

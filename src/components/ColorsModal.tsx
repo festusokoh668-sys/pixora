@@ -131,11 +131,15 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-md p-0 sm:p-4 animate-in fade-in duration-200"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-md p-0 sm:p-4 animate-in fade-in duration-200 cursor-pointer"
       role="dialog"
       aria-modal="true"
     >
-      <div className="w-full sm:max-w-sm bg-slate-900 border-t sm:border border-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-white">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-sm bg-slate-900 border-t sm:border border-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-white cursor-default"
+      >
         {/* Hidden Native Input */}
         <input
           ref={colorInputRef}
