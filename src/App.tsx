@@ -148,6 +148,15 @@ export default function App() {
     showToast(`Tracing: ${template.name}`);
   };
 
+  // Start with a clean, plain white paper sheet from Welcome Screen
+  const handleStartFreshCanvas = () => {
+    if (activeTemplate) {
+      setLastClosedTemplate(activeTemplate);
+      setActiveTemplate(null);
+    }
+    setCurrentView('studio');
+  };
+
   // Toast trigger
   const showToast = (text: string, hex?: string) => {
     setToastMessage({ text, hex });
@@ -216,6 +225,8 @@ export default function App() {
         handleRedo();
       } else if (e.key.toLowerCase() === 'b') {
         setTool('brush');
+      } else if (e.key.toLowerCase() === 'k') {
+        setTool('bucket');
       } else if (e.key.toLowerCase() === 'p') {
         setTool('pencil');
       } else if (e.key.toLowerCase() === 'e') {
@@ -256,7 +267,7 @@ export default function App() {
 
       {currentView === 'welcome' ? (
         <WelcomeScreen
-          onStartCreating={() => setCurrentView('studio')}
+          onStartCreating={handleStartFreshCanvas}
           onSelectTemplateDirectly={(tpl) => {
             handleSelectTemplate(tpl);
             setCurrentView('studio');

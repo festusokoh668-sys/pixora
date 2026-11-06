@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Pencil,
   Brush,
+  PaintBucket,
   Highlighter,
   Feather,
   Eraser,
@@ -44,7 +45,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   const tools: { id: ToolType; label: string; icon: React.ReactNode }[] = [
     { id: 'calligraphy', label: 'Pen', icon: <Feather className="w-5 h-5" /> },
     { id: 'pencil', label: 'Pencil', icon: <Pencil className="w-5 h-5" /> },
-    { id: 'brush', label: 'Paint', icon: <Brush className="w-5 h-5" /> },
+    { id: 'brush', label: 'Paint Brush', icon: <Brush className="w-5 h-5" /> },
+    { id: 'bucket', label: 'Paint Bucket', icon: <PaintBucket className="w-5 h-5" /> },
     { id: 'highlighter', label: 'Marker', icon: <Highlighter className="w-5 h-5" /> },
     { id: 'eraser', label: 'Eraser', icon: <Eraser className="w-5 h-5" /> },
   ];
@@ -158,7 +160,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
         {/* Stable Nav Grid: Every button has fixed width and height so nothing ever moves or shifts */}
         <nav
-          className="max-w-md mx-auto flex items-center justify-between gap-1"
+          className="max-w-xl mx-auto flex items-center justify-between gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar"
           aria-label="Drawing Tools Navigation"
         >
           {/* Static Tools */}
@@ -171,7 +173,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onToolSelect(t.id);
                   setShowSizeModal(false);
                 }}
-                className={`w-12 h-12 flex-1 max-w-[54px] rounded-xl flex flex-col items-center justify-center cursor-pointer select-none ${
+                className={`w-11 sm:w-12 h-12 flex-1 max-w-[58px] rounded-xl flex flex-col items-center justify-center cursor-pointer select-none shrink-0 ${
                   isActive
                     ? 'bg-[#164BCE] text-white shadow-sm'
                     : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
@@ -180,7 +182,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 aria-label={`Select ${t.label} tool`}
               >
                 {t.icon}
-                <span className="text-[10px] font-semibold mt-0.5 leading-none">
+                <span className="text-[8px] sm:text-[9.5px] font-semibold mt-0.5 leading-none text-center truncate max-w-full px-0.5">
                   {t.label}
                 </span>
               </button>

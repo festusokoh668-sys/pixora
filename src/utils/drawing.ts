@@ -160,11 +160,17 @@ export function applyToolStyleToContext(
     ctx.shadowColor = stroke.color;
     ctx.shadowBlur = Math.max(1.2, stroke.size * 0.2);
   } else if (stroke.tool === 'brush') {
-    // 3. Original Drawing Paint: Rich viscous body, wet paint edge
+    // 3. Paint Brush: Rich viscous body, wet paint edge
     ctx.lineWidth = stroke.size * 1.4;
     ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.95);
     ctx.shadowColor = stroke.color;
     ctx.shadowBlur = Math.max(2.5, stroke.size * 0.35);
+  } else if (stroke.tool === 'bucket') {
+    // 4. Paint Bucket: Broad, ultra-thick, luscious opaque paint laydown that paints better, denser, and thicker than the paint brush
+    ctx.lineWidth = stroke.size * 2.8;
+    ctx.globalAlpha = Math.min(1.0, stroke.opacity * 1.0);
+    ctx.shadowColor = stroke.color;
+    ctx.shadowBlur = Math.max(4, stroke.size * 0.5);
   } else if (stroke.tool === 'highlighter') {
     // 4. Marker / Highlighter: Broad semi-transparent wash
     ctx.lineWidth = stroke.size * 2.2;

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles } from 'lucide-react';
+import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical } from 'lucide-react';
 import { DrawingTemplate, Point, Stroke, ToolType } from '../types';
 import {
   getCanvasCoordinates,
@@ -63,6 +63,51 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
   const [processedTraceUrl, setProcessedTraceUrl] = useState<string | null>(null);
   const [isProcessingOutline, setIsProcessingOutline] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
+
+  // Draggable Title Block HUD State
+  const [hudOffset, setHudOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDraggingHud, setIsDraggingHud] = useState<boolean>(false);
+  const isDraggingHudRef = useRef<boolean>(false);
+  const dragStartPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const dragStartOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const handleHudPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button, input, [role="button"]')) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    isDraggingHudRef.current = true;
+    setIsDraggingHud(true);
+    dragStartPointerRef.current = { x: e.clientX, y: e.clientY };
+    dragStartOffsetRef.current = { ...hudOffset };
+  };
+
+  const handleHudPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingHudRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dx = e.clientX - dragStartPointerRef.current.x;
+    const dy = e.clientY - dragStartPointerRef.current.y;
+    setHudOffset({
+      x: dragStartOffsetRef.current.x + dx,
+      y: dragStartOffsetRef.current.y + dy,
+    });
+  };
+
+  const handleHudPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingHudRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    isDraggingHudRef.current = false;
+    setIsDraggingHud(false);
+  };
 
   // Resize canvas based on container dimensions
   useEffect(() => {
@@ -346,12 +391,41 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
       <div className="relative z-10 max-w-full max-h-full flex items-center justify-center shadow-[0_20px_60px_rgba(22,75,206,0.22),0_0_35px_rgba(37,99,235,0.18)] rounded-2xl sm:rounded-3xl p-2 bg-gradient-to-b from-white via-blue-50/80 to-blue-100/60 border-2 border-blue-400/50">
         {/* Floating Tracing Control HUD */}
         {activeTemplate && (
-          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-auto">
-            {/* Template Info & Visibility Toggle */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 shadow-md text-xs text-slate-800">
+          <div className="absolute top-3 left-3 right-3 z-20 flex items-start justify-between gap-2 pointer-events-none">
+            {/* Movable Template Title Block & Controls */}
+            <div
+              style={{
+                transform: `translate3d(${hudOffset.x}px, ${hudOffset.y}px, 0)`,
+                touchAction: 'none',
+              }}
+              onPointerDown={handleHudPointerDown}
+              onPointerMove={handleHudPointerMove}
+              onPointerUp={handleHudPointerUp}
+              onPointerCancel={handleHudPointerUp}
+              onDoubleClick={() => setHudOffset({ x: 0, y: 0 })}
+              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/95 backdrop-blur-md border shadow-md transition-shadow select-none cursor-grab active:cursor-grabbing text-xs text-slate-800 pointer-events-auto ${
+                isDraggingHud
+                  ? 'border-blue-500 shadow-xl ring-2 ring-blue-400/40'
+                  : 'border-slate-200/90 hover:border-blue-300 hover:shadow-lg'
+              }`}
+              title="Click and drag to move this title block anywhere (Double-click to reset)"
+            >
+              {/* Drag Handle Grip Icon */}
+              <div
+                className="cursor-grab active:cursor-grabbing p-0.5 text-slate-400 hover:text-blue-600 flex items-center shrink-0"
+                title="Drag to move title block anywhere"
+              >
+                <GripVertical className="w-3.5 h-3.5" />
+              </div>
+
+              {/* Guide Visibility Toggle */}
               <button
-                onClick={() => setShowTemplateGuide(!showTemplateGuide)}
-                className="flex items-center gap-1.5 text-slate-700 hover:text-blue-600 font-semibold cursor-pointer"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowTemplateGuide(!showTemplateGuide);
+                }}
+                className="p-1 rounded-full text-slate-700 hover:text-blue-600 hover:bg-blue-50 cursor-pointer transition-colors"
                 title={showTemplateGuide ? 'Hide tracing guide' : 'Show tracing guide'}
               >
                 {showTemplateGuide ? (
@@ -359,17 +433,23 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                 ) : (
                   <EyeOff className="w-3.5 h-3.5 text-slate-400" />
                 )}
-                <span className="font-semibold truncate max-w-[90px] sm:max-w-[140px]">
-                  {activeTemplate.name}
-                </span>
               </button>
+
+              {/* Title Text */}
+              <span className="font-bold truncate max-w-[95px] sm:max-w-[150px] text-slate-800 cursor-grab">
+                {activeTemplate.name}
+              </span>
 
               <div className="h-3 w-[1px] bg-slate-200" />
 
               {/* Opacity Adjustment */}
               <button
-                onClick={() => setShowOpacitySlider(!showOpacitySlider)}
-                className="flex items-center gap-1 text-blue-600 hover:text-blue-800 px-1 font-bold cursor-pointer"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowOpacitySlider(!showOpacitySlider);
+                }}
+                className="flex items-center gap-1 text-blue-600 hover:text-blue-800 px-1 font-bold cursor-pointer hover:bg-blue-50 rounded-md py-0.5 transition-colors"
                 title="Adjust guide opacity and outline details"
               >
                 <Sliders className="w-3 h-3" />
@@ -381,7 +461,9 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                 <>
                   <div className="h-3 w-[1px] bg-slate-200" />
                   <button
-                    onClick={() => {
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (traceMode === 'outline') setTraceMode('grayscale');
                       else if (traceMode === 'grayscale') setTraceMode('color');
                       else setTraceMode('outline');
@@ -410,7 +492,11 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                 <>
                   <div className="h-3 w-[1px] bg-slate-200" />
                   <button
-                    onClick={handleToggleVideoPlayback}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleVideoPlayback();
+                    }}
                     className="p-1 rounded text-slate-700 hover:text-blue-600 cursor-pointer"
                     title={isVideoPlaying ? 'Pause Frame' : 'Play Video'}
                   >
@@ -425,19 +511,82 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
 
               <div className="h-3 w-[1px] bg-slate-200" />
 
+              {/* Close template button */}
               <button
-                onClick={onClearTemplate}
-                className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-1 cursor-pointer"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClearTemplate();
+                }}
+                className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-1.5 py-0.5 rounded-full hover:bg-red-50 cursor-pointer transition-colors"
                 title="Remove template from canvas"
               >
                 ✕
               </button>
+
+              {/* Attached Opacity Popover (Moves together with the title block!) */}
+              {showOpacitySlider && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="absolute top-full mt-2 left-0 z-40 p-3.5 rounded-2xl bg-white/98 backdrop-blur-md border border-slate-200 shadow-2xl flex flex-col gap-3 w-64 text-xs text-slate-800 cursor-default animate-in fade-in slide-in-from-top-1 duration-150"
+                >
+                  <div>
+                    <div className="flex justify-between items-center text-slate-700 mb-1">
+                      <span className="font-semibold">Guide Opacity</span>
+                      <span className="font-bold text-blue-600">{Math.round(templateOpacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.05"
+                      max="1"
+                      step="0.05"
+                      value={templateOpacity}
+                      onChange={(e) => onTemplateOpacityChange(parseFloat(e.target.value))}
+                      className="w-full accent-blue-600 cursor-pointer"
+                    />
+                  </div>
+
+                  {traceMode === 'outline' && (
+                    <div>
+                      <div className="flex justify-between items-center text-slate-700 mb-1">
+                        <span className="font-semibold">Outline Detail Sensitivity</span>
+                        <span className="font-bold text-blue-600">{outlineDetailThreshold}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="15"
+                        max="80"
+                        step="5"
+                        value={outlineDetailThreshold}
+                        onChange={(e) => setOutlineDetailThreshold(parseInt(e.target.value, 10))}
+                        className="w-full accent-blue-600 cursor-pointer"
+                      />
+                      <div className="flex justify-between text-[9px] text-slate-400 mt-0.5">
+                        <span>More lines (15)</span>
+                        <span>Fewer lines (80)</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px] text-slate-500">
+                    <span>Mode: <strong className="uppercase text-blue-600 font-bold">{traceMode}</strong></span>
+                    <button
+                      type="button"
+                      onClick={() => setShowOpacitySlider(false)}
+                      className="text-blue-600 font-bold hover:underline cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Quick Switch Template Button */}
             <button
               onClick={onOpenTemplates}
-              className="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 hover:border-blue-400 shadow-md text-[11px] font-bold text-slate-700 hover:text-blue-600 transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 hover:border-blue-400 shadow-md text-[11px] font-bold text-slate-700 hover:text-blue-600 transition-colors cursor-pointer pointer-events-auto shrink-0"
             >
               Paint Books
             </button>
@@ -466,59 +615,6 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
             >
               Paint Books
             </button>
-          </div>
-        )}
-
-        {/* Template Opacity & Outline Sensitivity Popover */}
-        {activeTemplate && showOpacitySlider && (
-          <div className="absolute top-14 left-4 z-30 p-3.5 rounded-2xl bg-white/98 backdrop-blur-md border border-slate-200 shadow-xl flex flex-col gap-3 w-64 text-xs text-slate-800">
-            <div>
-              <div className="flex justify-between items-center text-slate-700 mb-1">
-                <span className="font-semibold">Guide Opacity</span>
-                <span className="font-bold text-blue-600">{Math.round(templateOpacity * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min="0.05"
-                max="1"
-                step="0.05"
-                value={templateOpacity}
-                onChange={(e) => onTemplateOpacityChange(parseFloat(e.target.value))}
-                className="w-full accent-blue-600 cursor-pointer"
-              />
-            </div>
-
-            {traceMode === 'outline' && (
-              <div>
-                <div className="flex justify-between items-center text-slate-700 mb-1">
-                  <span className="font-semibold">Outline Detail Sensitivity</span>
-                  <span className="font-bold text-blue-600">{outlineDetailThreshold}</span>
-                </div>
-                <input
-                  type="range"
-                  min="15"
-                  max="80"
-                  step="5"
-                  value={outlineDetailThreshold}
-                  onChange={(e) => setOutlineDetailThreshold(parseInt(e.target.value, 10))}
-                  className="w-full accent-blue-600 cursor-pointer"
-                />
-                <div className="flex justify-between text-[9px] text-slate-400 mt-0.5">
-                  <span>More lines (15)</span>
-                  <span>Fewer lines (80)</span>
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px] text-slate-500">
-              <span>Mode: <strong className="uppercase text-blue-600 font-bold">{traceMode}</strong></span>
-              <button
-                onClick={() => setShowOpacitySlider(false)}
-                className="text-blue-600 font-bold hover:underline cursor-pointer"
-              >
-                Done
-              </button>
-            </div>
           </div>
         )}
 

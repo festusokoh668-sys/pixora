@@ -1,4 +1,4 @@
-export type ToolType = 'pencil' | 'brush' | 'highlighter' | 'calligraphy' | 'eraser';
+export type ToolType = 'pencil' | 'brush' | 'bucket' | 'highlighter' | 'calligraphy' | 'eraser';
 
 export interface Point {
   x: number;

@@ -150,10 +150,19 @@ test('applyToolStyleToContext configures sharp pen, blunt pencil, and original d
   assert.ok(pencilCtx.shadowBlur > 0); // soft graphite edge
   assert.ok(pencilCtx.globalAlpha < 1.0); // graphite density
 
-  // 3. Original Drawing Paint
+  // 3. Paint Brush
   const paintStroke = createStroke('brush', baseColor, baseSize, 1.0, { x: 0, y: 0 });
   const paintCtx = createMockCtx() as any;
   applyToolStyleToContext(paintCtx, paintStroke);
   assert.equal(paintCtx.lineWidth, 14.0); // size * 1.4 -> rich viscous paint body
   assert.ok(paintCtx.shadowBlur >= 2.5); // wet paint edge
+
+  // 4. Paint Bucket (Broad, thick, rich opaque paint)
+  const bucketStroke = createStroke('bucket', baseColor, baseSize, 1.0, { x: 0, y: 0 });
+  const bucketCtx = createMockCtx() as any;
+  applyToolStyleToContext(bucketCtx, bucketStroke);
+  assert.equal(bucketCtx.lineWidth, 28.0); // size * 2.8 -> twice as thick as Paint Brush (28 vs 14)
+  assert.equal(bucketCtx.globalAlpha, 1.0); // full opaque coverage
+  assert.ok(bucketCtx.lineWidth > paintCtx.lineWidth); // strictly thicker than paint brush
+  assert.ok(bucketCtx.shadowBlur >= 4); // rich wet paint laydown
 });
