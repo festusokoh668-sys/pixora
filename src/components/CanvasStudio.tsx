@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical } from 'lucide-react';
+import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { DrawingTemplate, Point, Stroke, ToolType } from '../types';
 import {
   getCanvasCoordinates,
@@ -64,6 +64,20 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
   const [processedTraceUrl, setProcessedTraceUrl] = useState<string | null>(null);
   const [isProcessingOutline, setIsProcessingOutline] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
+  // Canvas Zoom Feature State (50% to 350%)
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+
+  const handleZoomIn = useCallback(() => {
+    setZoomLevel((prev) => Math.min(3.5, Math.round((prev + 0.25) * 100) / 100));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomLevel((prev) => Math.max(0.5, Math.round((prev - 0.25) * 100) / 100));
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    setZoomLevel(1.0);
+  }, []);
 
   // Draggable Title Block HUD State
   const [hudOffset, setHudOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -649,8 +663,43 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
           </div>
         )}
 
-        {/* Canvas & Tracing Layer Container */}
-        <div className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200/80 flex items-center justify-center">
+        {/* Floating Zoom Controls HUD Widget */}
+        <div className="absolute bottom-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 shadow-lg text-xs text-slate-800 select-none pointer-events-auto">
+          <button
+            type="button"
+            onClick={handleZoomOut}
+            disabled={zoomLevel <= 0.5}
+            className="p-1.5 rounded-full hover:bg-blue-50 text-slate-700 hover:text-blue-600 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-colors"
+            title="Zoom Out (-)"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleResetZoom}
+            className="px-2 py-0.5 rounded-full hover:bg-slate-100 font-mono font-bold text-[11px] text-blue-700 cursor-pointer transition-colors"
+            title="Reset Zoom (100%)"
+          >
+            {Math.round(zoomLevel * 100)}%
+          </button>
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            disabled={zoomLevel >= 3.5}
+            className="p-1.5 rounded-full hover:bg-blue-50 text-slate-700 hover:text-blue-600 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-colors"
+            title="Zoom In (+)"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Canvas & Tracing Layer Container with Smooth Transform Zoom */}
+        <div className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200/80 flex items-center justify-center transition-transform duration-150 ease-out"
+          style={{
+            transform: `scale(${zoomLevel})`,
+            transformOrigin: 'center center',
+          }}
+        >
           {/* Main User Drawing Canvas */}
           <canvas
             ref={canvasRef}

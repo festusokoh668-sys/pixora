@@ -264,30 +264,30 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
           className="hidden"
         />
 
-        {/* Search, Upload, and Clean Uncluttered Filters */}
-        <div className="p-4 border-b border-slate-100 bg-slate-50/70 flex flex-col gap-3">
-          <div className="flex items-center gap-2">
+        {/* Search, Upload, and Clean Spacious Filters */}
+        <div className="p-5 border-b border-slate-100 bg-slate-50/70 flex flex-col gap-4">
+          <div className="flex items-center gap-3">
             {/* Live Search Box */}
             <div className="relative flex-1">
               {isSearchingOnline ? (
-                <Loader2 className="w-4 h-4 text-blue-600 absolute left-3 top-1/2 -translate-y-1/2 animate-spin" />
+                <Loader2 className="w-4 h-4 text-blue-600 absolute left-3.5 top-1/2 -translate-y-1/2 animate-spin" />
               ) : (
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               )}
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search paint books by title or category..."
-                className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 transition-colors shadow-sm font-medium"
+                className="w-full pl-10 pr-9 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors shadow-sm font-medium"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
                   title="Clear search"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -298,37 +298,37 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                 onClearTemplate();
                 onClose();
               }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs sm:text-sm transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
               title="Start with a clean blank canvas"
             >
-              <FileText className="w-3.5 h-3.5 text-slate-500" />
+              <FileText className="w-4 h-4 text-slate-500" />
               <span className="hidden sm:inline">Blank Canvas</span>
             </button>
 
             {/* Upload Own Picture */}
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 text-white font-bold text-xs sm:text-sm hover:bg-blue-700 transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
               title="Upload your own photo or video to trace"
             >
-              <Upload className="w-3.5 h-3.5" />
+              <Upload className="w-4 h-4" />
               <span className="hidden sm:inline">Upload Photo</span>
               <span className="sm:hidden">Upload</span>
             </button>
           </div>
 
           {/* Clean Level Filter Row */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-xs">
-            <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider shrink-0 w-20 flex items-center gap-1">
-              <Award className="w-3.5 h-3.5 text-blue-600" />
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-xs">
+            <span className="text-[12px] font-black text-slate-500 uppercase tracking-wider shrink-0 w-24 flex items-center gap-1.5">
+              <Award className="w-4 h-4 text-blue-600" />
               <span>Level:</span>
             </span>
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
               {difficultyFilters.map((diff) => (
                 <button
                   key={diff.id}
                   onClick={() => setSelectedDifficulty(diff.id)}
-                  className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                  className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 ${
                     selectedDifficulty === diff.id
                       ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-400/30 font-black'
                       : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -341,16 +341,16 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
           </div>
 
           {/* Clean Categories Filter Row */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-xs">
-            <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider shrink-0 w-20">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-xs">
+            <span className="text-[12px] font-black text-slate-500 uppercase tracking-wider shrink-0 w-24">
               Categories:
             </span>
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
               {categoryFilters.map((f) => (
                 <button
                   key={f.id}
                   onClick={() => setSelectedFilter(f.id)}
-                  className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                  className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
                     selectedFilter === f.id
                       ? 'bg-slate-900 text-white shadow-sm font-black'
                       : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
