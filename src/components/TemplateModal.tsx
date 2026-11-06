@@ -145,7 +145,30 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
     return true;
   });
 
-  const totalResultsCount = filteredCollections.length + (searchQuery.trim().length >= 2 ? filteredLiveResults.length : 0);
+  // When a specific category is chosen (e.g. vehicles, characters, fruits) or a difficulty is filtered,
+  // expand all outline stencil levels so every outline photo is clearly visible and selectable!
+  const shouldExpandLevels =
+    (selectedFilter !== 'all' && selectedFilter !== 'photos') ||
+    selectedDifficulty !== 'all';
+
+  const expandedTemplates: DrawingTemplate[] = [];
+  if (shouldExpandLevels) {
+    for (const col of filteredCollections) {
+      if (selectedDifficulty === 'all') {
+        expandedTemplates.push(col.levels.Easy, col.levels.Medium, col.levels.Hard);
+      } else if (
+        selectedDifficulty === 'Easy' ||
+        selectedDifficulty === 'Medium' ||
+        selectedDifficulty === 'Hard'
+      ) {
+        expandedTemplates.push(col.levels[selectedDifficulty]);
+      }
+    }
+  }
+
+  const totalResultsCount =
+    (shouldExpandLevels ? expandedTemplates.length : filteredCollections.length) +
+    (searchQuery.trim().length >= 2 ? filteredLiveResults.length : 0);
 
   // Helper for difficulty badge styling
   const renderDifficultyBadge = (difficulty: DifficultyLevel) => {
@@ -360,124 +383,197 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
 
         {/* Template Grid */}
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50/40">
-          {/* 8 Drawing Collections Display (Easy, Medium, Hard) */}
-          {filteredCollections.map((col) => {
-            const activeLevel: 'Easy' | 'Medium' | 'Hard' =
-              selectedDifficulty === 'Easy' || selectedDifficulty === 'Medium' || selectedDifficulty === 'Hard'
-                ? selectedDifficulty
-                : collectionActiveLevel[col.id] || 'Easy';
+          {/* Expanded Individual Outline Photo Stencils (When category or difficulty is filtered) */}
+          {shouldExpandLevels &&
+            expandedTemplates.map((template) => {
+              const isSelected = activeTemplate?.id === template.id;
+              const safeUrl = template.mediaUrl?.startsWith('data:')
+                ? template.mediaUrl
+                : template.mediaUrl
+                ? encodeURI(decodeURI(template.mediaUrl))
+                : '';
 
-            const currentTemplate = col.levels[activeLevel];
-            const isSelected = activeTemplate?.id === currentTemplate.id;
-            const isCollectionActive =
-              activeTemplate?.id === col.levels.Easy.id ||
-              activeTemplate?.id === col.levels.Medium.id ||
-              activeTemplate?.id === col.levels.Hard.id;
+              return (
+                <div
+                  key={template.id}
+                  onClick={() => {
+                    onSelectTemplate(template);
+                    onClose();
+                  }}
+                  className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all group cursor-pointer relative overflow-hidden bg-white ${
+                    isSelected
+                      ? 'border-blue-600 ring-2 ring-blue-500/30 bg-blue-50/20 shadow-md'
+                      : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
+                  }`}
+                >
+                  {/* Media Preview Box */}
+                  <div className="w-full h-36 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center border border-slate-200">
+                    {safeUrl ? (
+                      <img
+                        src={safeUrl}
+                        alt={template.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain p-2 filter contrast(125%) group-hover:scale-105 transition-transform duration-300"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.onerror = null;
+                          target.src = generateFallbackSvgDataUrl(template.name);
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-xs">
+                        {template.name}
+                      </div>
+                    )}
 
-            const safeUrl = currentTemplate.mediaUrl?.startsWith('data:')
-              ? currentTemplate.mediaUrl
-              : currentTemplate.mediaUrl
-              ? encodeURI(decodeURI(currentTemplate.mediaUrl))
-              : '';
+                    {/* Selected Checkmark Badge */}
+                    {isSelected && (
+                      <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
+                        <Check className="w-3.5 h-3.5" />
+                      </div>
+                    )}
 
-            return (
-              <div
-                key={col.id}
-                onClick={() => {
-                  onSelectTemplate(currentTemplate);
-                  onClose();
-                }}
-                className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all group cursor-pointer relative overflow-hidden bg-white ${
-                  isCollectionActive
-                    ? 'border-blue-600 ring-2 ring-blue-500/30 bg-blue-50/20 shadow-md'
-                    : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
-                }`}
-              >
-                {/* Media Preview Box */}
-                <div className="w-full h-28 mb-2 rounded-xl overflow-hidden bg-slate-100 relative flex items-center justify-center border border-slate-200">
-                  {safeUrl ? (
-                    <img
-                      src={safeUrl}
-                      alt={`${col.title} (${activeLevel})`}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform duration-300"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        target.onerror = null;
-                        target.src = generateFallbackSvgDataUrl(col.title);
-                      }}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-xs">
-                      {col.title}
-                    </div>
-                  )}
-
-                  {/* Selected Checkmark Badge */}
-                  {isSelected && (
-                    <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
-                      <Check className="w-3.5 h-3.5" />
-                    </div>
-                  )}
-
-                  {/* Category Pill Tag */}
-                  <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-white/95 backdrop-blur-sm text-[9px] font-bold text-slate-700 uppercase tracking-wider shadow-sm border border-slate-200/60">
-                    {col.category}
-                  </span>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <span className="text-xs font-bold text-slate-900 truncate" title={col.title}>
-                      {col.title}
+                    {/* Category Pill Tag */}
+                    <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-white/95 backdrop-blur-sm text-[9px] font-bold text-slate-700 uppercase tracking-wider shadow-sm border border-slate-200/60">
+                      {template.category}
                     </span>
-                    {renderDifficultyBadge(activeLevel)}
                   </div>
 
-                  {/* Easy, Medium, Hard Difficulty Level Selectors */}
-                  <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center gap-1">
-                    {(['Easy', 'Medium', 'Hard'] as const).map((lvl) => {
-                      const isThisLevelActive = activeLevel === lvl;
-                      const isThisLevelSelected = activeTemplate?.id === col.levels[lvl].id;
-                      return (
-                        <button
-                          key={lvl}
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectTemplate(col.levels[lvl]);
-                            onClose();
-                          }}
-                          onMouseEnter={() => {
-                            setCollectionActiveLevel((prev) => ({ ...prev, [col.id]: lvl }));
-                          }}
-                          className={`flex-1 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer text-center select-none ${
-                            isThisLevelSelected
-                              ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-500'
-                              : isThisLevelActive
-                              ? lvl === 'Easy'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black'
-                                : lvl === 'Medium'
-                                ? 'bg-blue-100 text-blue-800 border border-blue-300 font-black'
-                                : 'bg-amber-100 text-amber-900 border border-amber-300 font-black'
-                              : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
-                          }`}
-                          title={`Trace ${col.title} (${lvl})`}
-                        >
-                          {lvl}
-                        </button>
-                      );
-                    })}
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-xs font-bold text-slate-900 truncate" title={template.name}>
+                        {template.name}
+                      </span>
+                      {renderDifficultyBadge(template.difficulty)}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-blue-600 font-semibold group-hover:text-blue-700">
+                      <span>Tap to trace outline</span>
+                      <span className="text-sm font-bold">→</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          {/* Empty State when no collections match */}
-          {filteredCollections.length === 0 && (
+          {/* 8 Drawing Collections Display (Easy, Medium, Hard) on All Categories */}
+          {!shouldExpandLevels &&
+            filteredCollections.map((col) => {
+              const activeLevel: 'Easy' | 'Medium' | 'Hard' =
+                collectionActiveLevel[col.id] || 'Easy';
+
+              const currentTemplate = col.levels[activeLevel];
+              const isSelected = activeTemplate?.id === currentTemplate.id;
+              const isCollectionActive =
+                activeTemplate?.id === col.levels.Easy.id ||
+                activeTemplate?.id === col.levels.Medium.id ||
+                activeTemplate?.id === col.levels.Hard.id;
+
+              const safeUrl = currentTemplate.mediaUrl?.startsWith('data:')
+                ? currentTemplate.mediaUrl
+                : currentTemplate.mediaUrl
+                ? encodeURI(decodeURI(currentTemplate.mediaUrl))
+                : '';
+
+              return (
+                <div
+                  key={col.id}
+                  onClick={() => {
+                    onSelectTemplate(currentTemplate);
+                    onClose();
+                  }}
+                  className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all group cursor-pointer relative overflow-hidden bg-white ${
+                    isCollectionActive
+                      ? 'border-blue-600 ring-2 ring-blue-500/30 bg-blue-50/20 shadow-md'
+                      : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
+                  }`}
+                >
+                  {/* Media Preview Box */}
+                  <div className="w-full h-36 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center border border-slate-200">
+                    {safeUrl ? (
+                      <img
+                        src={safeUrl}
+                        alt={`${col.title} (${activeLevel})`}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain p-2 filter contrast(125%) group-hover:scale-105 transition-transform duration-300"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.onerror = null;
+                          target.src = generateFallbackSvgDataUrl(col.title);
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 font-bold text-xs">
+                        {col.title}
+                      </div>
+                    )}
+
+                    {/* Selected Checkmark Badge */}
+                    {isSelected && (
+                      <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md">
+                        <Check className="w-3.5 h-3.5" />
+                      </div>
+                    )}
+
+                    {/* Category Pill Tag */}
+                    <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-white/95 backdrop-blur-sm text-[9px] font-bold text-slate-700 uppercase tracking-wider shadow-sm border border-slate-200/60">
+                      {col.category}
+                    </span>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="text-xs font-bold text-slate-900 truncate" title={col.title}>
+                        {col.title}
+                      </span>
+                      {renderDifficultyBadge(activeLevel)}
+                    </div>
+
+                    {/* Easy, Medium, Hard Difficulty Level Selectors */}
+                    <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center gap-1">
+                      {(['Easy', 'Medium', 'Hard'] as const).map((lvl) => {
+                        const isThisLevelActive = activeLevel === lvl;
+                        const isThisLevelSelected = activeTemplate?.id === col.levels[lvl].id;
+                        return (
+                          <button
+                            key={lvl}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCollectionActiveLevel((prev) => ({ ...prev, [col.id]: lvl }));
+                            }}
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              onSelectTemplate(col.levels[lvl]);
+                              onClose();
+                            }}
+                            className={`flex-1 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer text-center select-none ${
+                              isThisLevelSelected
+                                ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-500'
+                                : isThisLevelActive
+                                ? lvl === 'Easy'
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black'
+                                  : lvl === 'Medium'
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-300 font-black'
+                                  : 'bg-amber-100 text-amber-900 border border-amber-300 font-black'
+                                : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                            }`}
+                            title={`Click to view ${col.title} (${lvl}) outline photo`}
+                          >
+                            {lvl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+          {/* Empty State when no outline photos match */}
+          {((shouldExpandLevels && expandedTemplates.length === 0) ||
+            (!shouldExpandLevels && filteredCollections.length === 0)) && (
             <div className="col-span-full py-12 flex flex-col items-center justify-center text-center">
-              <p className="text-sm font-bold text-slate-700">No paint books found</p>
+              <p className="text-sm font-bold text-slate-700">No outline photos found</p>
               <p className="text-xs text-slate-400 mt-1">Try selecting "All Categories" or clearing the search</p>
               <button
                 type="button"

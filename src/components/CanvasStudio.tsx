@@ -154,7 +154,11 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
 
   // Process template image with Sobel edge detection to generate crisp outline trace
   useEffect(() => {
-    if (!activeTemplate || !activeTemplate.mediaUrl || activeTemplate.type === 'vector') {
+    const isPredefinedOutline =
+      activeTemplate?.mediaUrl?.includes('/assets/aistudio/') ||
+      Boolean(activeTemplate?.collectionId);
+
+    if (!activeTemplate || !activeTemplate.mediaUrl || activeTemplate.type === 'vector' || isPredefinedOutline) {
       setProcessedTraceUrl(null);
       setIsProcessingOutline(false);
       return;
@@ -679,7 +683,9 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                   crossOrigin="anonymous"
                   referrerPolicy="no-referrer"
                   className={`absolute inset-0 w-full h-full object-contain select-none transition-all duration-200 ${
-                    traceMode === 'outline'
+                    activeTemplate.mediaUrl?.includes('/assets/aistudio/') || activeTemplate.collectionId
+                      ? 'opacity-100 filter contrast(130%)'
+                      : traceMode === 'outline'
                       ? 'opacity-40 filter contrast(110%)'
                       : traceMode === 'grayscale'
                       ? 'opacity-100 filter grayscale(100%)'
@@ -705,8 +711,10 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                 />
               )}
 
-              {/* 3. High-Contrast Line Art Trace Layer (Active in Outline Mode) */}
-              {traceMode === 'outline' && (
+              {/* 3. High-Contrast Line Art Trace Layer (Active in Outline Mode for non-outline photos) */}
+              {traceMode === 'outline' &&
+                !activeTemplate.mediaUrl?.includes('/assets/aistudio/') &&
+                !activeTemplate.collectionId && (
                 <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
                   {processedTraceUrl ? (
                     <img

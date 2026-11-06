@@ -412,73 +412,6 @@ export const REAL_MEDIA_TEMPLATES: DrawingTemplate[] = [
     `,
   },
   {
-    id: 'real-strawberries',
-    name: 'Fresh Strawberries',
-    category: 'fruits',
-    difficulty: 'Easy',
-    type: 'photo',
-    mediaUrl: '/src/assets/images/fresh_strawberries_1793728839279.jpg',
-    description: 'Macro photograph of fresh ripe red strawberries with dew drops and leaf contours',
-    tags: ['strawberry', 'strawberries', 'fruit', 'berry', 'berries', 'food', 'sweet', 'ripe', 'fresh'],
-    viewBox: '0 0 200 200',
-    svgPath: `
-      M 60 70 C 50 80 50 130 80 150 C 100 165 110 165 125 145 C 150 115 145 75 130 65 C 110 55 75 55 60 70 Z
-      M 95 60 L 80 45 M 95 60 L 95 40 M 95 60 L 110 45
-      M 60 70 L 75 68 M 80 62 L 95 65 M 110 62 L 125 68
-      M 75 85 A 2 2 0 1 0 75 81 M 100 85 A 2 2 0 1 0 100 81 M 120 85 A 2 2 0 1 0 120 81
-      M 85 105 A 2 2 0 1 0 85 101 M 110 105 A 2 2 0 1 0 110 101
-      M 75 125 A 2 2 0 1 0 75 121 M 100 128 A 2 2 0 1 0 100 124 M 120 122 A 2 2 0 1 0 120 118
-      M 90 145 A 2 2 0 1 0 90 141
-    `,
-  },
-  {
-    id: 'real-toucan',
-    name: 'Tropical Toucan',
-    category: 'animals',
-    difficulty: 'Medium',
-    type: 'photo',
-    mediaUrl: '/src/assets/images/tropical_toucan_1793728785285.jpg',
-    description: 'Vibrant tropical keel-billed toucan perched on an exotic branch',
-    tags: ['toucan', 'bird', 'tropical', 'jungle', 'beak', 'rainforest', 'feather', 'parrot', 'avian'],
-    viewBox: '0 0 200 200',
-    svgPath: `
-      M 90 40 C 130 30 175 45 180 75 C 182 88 150 90 115 85 M 90 40 C 70 45 60 65 65 90 C 70 120 65 150 80 175
-      M 90 40 L 115 85
-      M 80 55 A 5 5 0 1 0 80 45 A 5 5 0 1 0 80 55 Z
-      M 65 90 C 80 95 100 95 110 85
-      M 20 155 L 180 145 M 30 168 L 175 158
-      M 75 145 L 70 162 M 85 145 L 82 160
-      M 80 120 C 100 125 110 140 105 165
-    `,
-  },
-  {
-    id: 'real-lion',
-    name: 'Majestic Lion Head',
-    category: 'animals',
-    difficulty: 'Hard',
-    type: 'photo',
-    mediaUrl: '/src/assets/images/lion_portrait_1793728770710.jpg',
-    description: 'Crisp vector outline stencil of a majestic lion head with mane and facial features',
-    tags: ['lion', 'big cat', 'wildlife', 'safari', 'predator', 'mane', 'feline', 'king of jungle'],
-    viewBox: '0 0 200 200',
-    svgPath: `
-      M 100 25 C 80 15 55 25 45 45 C 35 60 30 85 40 105 C 45 120 50 135 60 150 C 70 165 85 180 100 188 C 115 180 130 165 140 150 C 150 135 155 120 160 105 C 170 85 165 60 155 45 C 145 25 120 15 100 25 Z
-      M 50 40 C 42 35 38 48 45 55 M 150 40 C 158 35 162 48 155 55
-      M 80 80 A 8 8 0 1 0 80 64 A 8 8 0 1 0 80 80 Z
-      M 120 80 A 8 8 0 1 0 120 64 A 8 8 0 1 0 120 80 Z
-      M 75 72 H 85 M 115 72 H 125
-      M 100 90 L 90 105 H 110 Z
-      M 100 105 L 100 115 M 100 115 Q 90 126 80 120 M 100 115 Q 110 126 120 120
-      M 80 110 L 45 108 M 80 115 L 42 118 M 80 120 L 46 128
-      M 120 110 L 155 108 M 120 115 L 158 118 M 120 120 L 154 128
-      M 100 126 L 90 142 L 100 150 L 110 142 Z
-      M 60 50 Q 75 60 85 40 M 140 50 Q 125 60 115 40
-      M 40 75 Q 60 85 70 95 M 160 75 Q 140 85 130 95
-      M 45 110 Q 65 125 75 140 M 155 110 Q 135 125 125 140
-      M 55 145 Q 75 155 85 170 M 145 145 Q 125 155 115 170
-    `,
-  },
-  {
     id: 'real-mountain',
     name: 'Alpine Mountain Vista',
     category: 'nature',
@@ -496,46 +429,6 @@ export const REAL_MEDIA_TEMPLATES: DrawingTemplate[] = [
       M 20 160 C 60 155 120 165 180 160
       M 40 175 C 80 170 140 180 170 175
       M 160 30 A 15 15 0 1 0 160 60 A 15 15 0 1 0 160 30 Z
-    `,
-  },
-  {
-    id: 'real-supercar',
-    name: 'Midnight Supercar',
-    category: 'vehicles',
-    difficulty: 'Pro',
-    type: 'photo',
-    mediaUrl: '/src/assets/images/modern_supercar_1793728811642.jpg',
-    description: 'Sleek aerodynamic sports supercar with sharp precision body contours',
-    tags: ['car', 'supercar', 'sports car', 'automobile', 'auto', 'vehicle', 'racecar', 'racing', 'speed'],
-    viewBox: '0 0 200 200',
-    svgPath: `
-      M 20 125 C 30 115 50 110 80 100 C 100 80 125 70 150 75 C 170 80 185 100 188 120 L 188 135 C 175 140 160 140 140 140 C 130 140 80 140 30 140 C 20 138 15 132 20 125 Z
-      M 75 102 C 95 85 120 78 145 82 C 148 95 140 105 130 108 L 75 102 Z
-      M 45 140 A 16 16 0 1 0 45 108 A 16 16 0 1 0 45 140 Z
-      M 155 140 A 16 16 0 1 0 155 108 A 16 16 0 1 0 155 140 Z
-      M 45 132 A 8 8 0 1 0 45 116 A 8 8 0 1 0 45 132 Z
-      M 155 132 A 8 8 0 1 0 155 116 A 8 8 0 1 0 155 132 Z
-      M 165 112 L 182 114 M 25 120 L 40 122
-    `,
-  },
-  {
-    id: 'real-astronaut',
-    name: 'Spacewalk Astronaut',
-    category: 'characters',
-    difficulty: 'Mastery',
-    type: 'photo',
-    mediaUrl: '/src/assets/images/astronaut_space_1793728866354.jpg',
-    description: 'Spacewalking astronaut in high-tech suit orbiting Earth with intricate helmet contours',
-    tags: ['astronaut', 'space', 'spaceman', 'cosmos', 'orbit', 'nasa', 'galaxy', 'stars', 'character'],
-    viewBox: '0 0 200 200',
-    svgPath: `
-      M 70 45 C 70 30 130 30 130 45 C 145 45 145 95 130 95 C 130 110 70 110 70 95 C 55 95 55 45 70 45 Z
-      M 80 55 C 80 50 120 50 120 55 C 128 55 128 85 120 85 C 120 90 80 90 80 85 C 72 85 72 55 80 55 Z
-      M 85 62 Q 95 60 100 68
-      M 78 105 L 68 140 C 68 150 82 150 82 140 L 88 120 L 96 120 L 96 160 L 82 162 L 82 172 L 100 172 L 102 120 L 104 120 L 106 172 L 124 172 L 124 162 L 110 160 L 110 120 L 118 120 L 124 140 C 124 150 138 150 138 140 L 128 105
-      M 88 125 H 118 V 145 H 88 Z
-      M 30 30 L 32 36 L 38 38 L 32 40 L 30 46 L 28 40 L 22 38 L 28 36 Z
-      M 165 30 L 167 36 L 173 38 L 167 40 L 165 46 L 163 40 L 157 38 L 163 36 Z
     `,
   },
 ];
