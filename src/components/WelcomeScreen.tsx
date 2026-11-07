@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { DrawingTemplate } from '../types';
 
 interface WelcomeScreenProps {
@@ -62,15 +62,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             onClick={onStartCreating}
             className="btn-glitter w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl text-white font-black text-base sm:text-lg shadow-[0_12px_35px_rgba(22,75,206,0.38)] hover:shadow-[0_16px_45px_rgba(22,75,206,0.5)] border border-white/70 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative"
           >
-            {/* Twinkling corner glints */}
-            <span className="sparkle-star absolute -top-1.5 -left-1.5 text-white/90">
-              <Sparkles className="w-4 h-4 fill-white" />
+            <span className="relative z-10 text-white font-black text-lg sm:text-xl tracking-wide uppercase drop-shadow-sm">
+              Start Creating
             </span>
-            <span className="sparkle-star absolute -bottom-1 -right-1 text-white/90" style={{ animationDelay: '1s' }}>
-              <Sparkles className="w-3.5 h-3.5 fill-white" />
-            </span>
-
-            <span className="relative z-10 drop-shadow-sm tracking-wide">Start Creating</span>
             <ArrowRight className="w-5 h-5 text-white relative z-10 group-hover:translate-x-1.5 transition-transform" />
           </button>
           <span className="text-[11px] font-semibold text-slate-500">

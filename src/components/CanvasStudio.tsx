@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical, Maximize2 } from 'lucide-react';
 import { DrawingTemplate, Point, Stroke, ToolType } from '../types';
 import {
   getCanvasCoordinates,
@@ -64,8 +64,15 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
   const [processedTraceUrl, setProcessedTraceUrl] = useState<string | null>(null);
   const [isProcessingOutline, setIsProcessingOutline] = useState<boolean>(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
-  // Canvas Zoom Feature State (50% to 350%)
+  // Canvas Zoom & Pan Feature State (50% to 350%)
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const pinchStartDistRef = useRef<number>(0);
+  const pinchStartZoomRef = useRef<number>(1.0);
+  const pinchStartCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pinchStartPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isPinchingRef = useRef<boolean>(false);
 
   const handleZoomIn = useCallback(() => {
     setZoomLevel((prev) => Math.min(3.5, Math.round((prev + 0.25) * 100) / 100));
@@ -77,7 +84,79 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
 
   const handleResetZoom = useCallback(() => {
     setZoomLevel(1.0);
+    setPanOffset({ x: 0, y: 0 });
   }, []);
+
+  // Multi-Touch Pinch to Zoom & Pan Handlers
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length >= 2) {
+      if (isDrawingRef.current) {
+        isDrawingRef.current = false;
+        currentStrokeRef.current = null;
+        redrawCanvas();
+      }
+      isPinchingRef.current = true;
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const center = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+
+      pinchStartDistRef.current = dist > 0 ? dist : 1;
+      pinchStartZoomRef.current = zoomLevel;
+      pinchStartCenterRef.current = center;
+      pinchStartPanRef.current = { ...panOffset };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length >= 2 && isPinchingRef.current) {
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const center = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+
+      const scale = dist / pinchStartDistRef.current;
+      const newZoom = Math.min(3.5, Math.max(0.5, Math.round(pinchStartZoomRef.current * scale * 100) / 100));
+      setZoomLevel(newZoom);
+
+      const dx = center.x - pinchStartCenterRef.current.x;
+      const dy = center.y - pinchStartCenterRef.current.y;
+      setPanOffset({
+        x: pinchStartPanRef.current.x + dx,
+        y: pinchStartPanRef.current.y + dy,
+      });
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length < 2) {
+      isPinchingRef.current = false;
+    }
+  };
+
+  // Trackpad & Wheel Pinch-to-Zoom & Pan
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.1 : -0.1;
+        setZoomLevel((prev) => Math.min(3.5, Math.max(0.5, Math.round((prev + delta) * 100) / 100)));
+      } else if (zoomLevel > 1.0 || panOffset.x !== 0 || panOffset.y !== 0) {
+        e.preventDefault();
+        setPanOffset((prev) => ({
+          x: prev.x - e.deltaX,
+          y: prev.y - e.deltaY,
+        }));
+      }
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [zoomLevel, panOffset]);
 
   // Draggable Title Block HUD State
   const [hudOffset, setHudOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -218,6 +297,29 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
     };
   }, [activeTemplate, outlineDetailThreshold]);
 
+  // Pre-load active template image object for canvas rendering & flood fill line detection
+  const [loadedTemplateImage, setLoadedTemplateImage] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    if (!activeTemplate || !activeTemplate.mediaUrl) {
+      setLoadedTemplateImage(null);
+      return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => {
+      setLoadedTemplateImage(img);
+    };
+    img.onerror = () => {
+      setLoadedTemplateImage(null);
+    };
+    img.src = activeTemplate.mediaUrl.startsWith('data:')
+      ? activeTemplate.mediaUrl
+      : encodeURI(decodeURI(activeTemplate.mediaUrl));
+  }, [activeTemplate]);
+
   const applyToolStyle = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
     applyToolStyleToContext(ctx, stroke, 'canvas');
   };
@@ -235,28 +337,44 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Fill crisp white sheet
-    if (!activeTemplate || !showTemplateGuide) {
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 1. Fill crisp white drawing paper background
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 2. Draw stencil guide lines onto canvas context if active so flood fill detects stencil boundaries
+    if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0.3, templateOpacity);
+      ctx.drawImage(loadedTemplateImage, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
     }
 
-    // Draw all completed strokes using smooth quadratic curves
+    // 3. Draw all completed user strokes (including Paint Bucket flood fills)
     for (const stroke of strokes) {
       drawStroke(ctx, stroke);
     }
 
-    // Draw active stroke if drawing
+    // 4. Draw active stroke if drawing
     if (currentStrokeRef.current) {
       drawStroke(ctx, currentStrokeRef.current);
     }
-  }, [strokes, activeTemplate, showTemplateGuide]);
+
+    // 5. Re-overlay crisp stencil outline lines over paint fills so stencil lines stay razor-sharp
+    if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.globalAlpha = Math.min(1.0, templateOpacity * 1.15);
+      ctx.drawImage(loadedTemplateImage, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }, [strokes, activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity]);
 
   useEffect(() => {
     redrawCanvas();
   }, [strokes, canvasDimensions, redrawCanvas]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isPinchingRef.current) return;
     e.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -663,42 +781,19 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
           </div>
         )}
 
-        {/* Floating Zoom Controls HUD Widget */}
-        <div className="absolute bottom-3 right-3 z-30 flex items-center gap-1 p-1 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 shadow-lg text-xs text-slate-800 select-none pointer-events-auto">
-          <button
-            type="button"
-            onClick={handleZoomOut}
-            disabled={zoomLevel <= 0.5}
-            className="p-1.5 rounded-full hover:bg-blue-50 text-slate-700 hover:text-blue-600 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-colors"
-            title="Zoom Out (-)"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={handleResetZoom}
-            className="px-2 py-0.5 rounded-full hover:bg-slate-100 font-mono font-bold text-[11px] text-blue-700 cursor-pointer transition-colors"
-            title="Reset Zoom (100%)"
-          >
-            {Math.round(zoomLevel * 100)}%
-          </button>
-          <button
-            type="button"
-            onClick={handleZoomIn}
-            disabled={zoomLevel >= 3.5}
-            className="p-1.5 rounded-full hover:bg-blue-50 text-slate-700 hover:text-blue-600 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-colors"
-            title="Zoom In (+)"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-        </div>
 
-        {/* Canvas & Tracing Layer Container with Smooth Transform Zoom */}
-        <div className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200/80 flex items-center justify-center transition-transform duration-150 ease-out"
+
+        {/* Canvas & Tracing Layer Container with Smooth Transform Zoom & Pan */}
+        <div
+          className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200/80 flex items-center justify-center transition-transform duration-75 ease-out"
           style={{
-            transform: `scale(${zoomLevel})`,
+            transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${zoomLevel})`,
             transformOrigin: 'center center',
           }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
         >
           {/* Main User Drawing Canvas */}
           <canvas

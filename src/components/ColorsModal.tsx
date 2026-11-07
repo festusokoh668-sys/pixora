@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Pipette, Shuffle } from 'lucide-react';
 import { hexToRgb, rgbToHex, rgbToHsv, hsvToRgb } from '../utils/color';
-import { COLOR_SWATCHES, getRandomColor } from '../data/creative';
+import {
+  COLOR_SWATCHES,
+  CLASSIC_PAINT_BOX,
+  SKIN_TONE_PALETTE,
+  PASTEL_PALETTE,
+  NEON_PALETTE,
+  NATURE_PALETTE,
+  JEWEL_METALLIC_PALETTE,
+  getRandomColor,
+} from '../data/creative';
 
 interface ColorsModalProps {
   isOpen: boolean;
@@ -93,22 +102,27 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
     isDraggingSpectrum.current = false;
   };
 
-  const handlePickPreset = (hex: string) => {
+  const handlePickPreset = (hex: string, autoClose = false) => {
     onColorChange(hex);
     const newRgb = hexToRgb(hex);
     setRgb(newRgb);
     setHsv(rgbToHsv(newRgb.r, newRgb.g, newRgb.b));
     setHexInput(hex.toUpperCase());
+    if (autoClose) {
+      onClose();
+    }
   };
 
-  // Eyedropper trigger
+  // Eyedropper trigger: closes Accurate Colors Studio immediately so full canvas is visible
   const handleTriggerEyedropper = async () => {
+    onClose();
     if ('EyeDropper' in window) {
       try {
         const eyeDropper = new (window as any).EyeDropper();
         const result = await eyeDropper.open();
         if (result?.sRGBHex) {
-          handlePickPreset(result.sRGBHex.toUpperCase());
+          const pickedHex = result.sRGBHex.toUpperCase();
+          onColorChange(pickedHex);
         }
       } catch {
         colorInputRef.current?.click();
@@ -283,48 +297,37 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
           )}
 
           {activeTab === 'palettes' && (
-            <div className="w-full flex flex-col gap-4 py-1 max-h-56 overflow-y-auto">
-              <div>
-                <span className="text-[11px] font-bold text-slate-400 block mb-1.5 uppercase tracking-wider">
-                  Royalty Studio Palette
-                </span>
-                <div className="grid grid-cols-6 gap-2">
-                  {royalPalette.map((hex) => (
-                    <button
-                      key={hex}
-                      onClick={() => handlePickPreset(hex)}
-                      className={`h-8 rounded-lg border-2 transition-transform active:scale-90 cursor-pointer ${
-                        currentColor.toLowerCase() === hex.toLowerCase()
-                          ? 'border-white scale-110 shadow-lg ring-2 ring-blue-500'
-                          : 'border-slate-700 hover:scale-105'
-                      }`}
-                      style={{ backgroundColor: hex }}
-                      aria-label={hex}
-                    />
-                  ))}
+            <div className="w-full flex flex-col gap-4 py-1 max-h-60 overflow-y-auto pr-1">
+              {[
+                { title: 'Classic MS Paint Box', items: CLASSIC_PAINT_BOX },
+                { title: 'Skin & Portrait Tones', items: SKIN_TONE_PALETTE },
+                { title: 'Pastels & Soft Hues', items: PASTEL_PALETTE },
+                { title: 'Neon & Cyber Vibrants', items: NEON_PALETTE },
+                { title: 'Nature & Earth', items: NATURE_PALETTE },
+                { title: 'Jewel & Metallic Tones', items: JEWEL_METALLIC_PALETTE },
+              ].map((section) => (
+                <div key={section.title}>
+                  <span className="text-[10.5px] font-bold text-slate-400 block mb-1.5 uppercase tracking-wider">
+                    {section.title}
+                  </span>
+                  <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5">
+                    {section.items.map((item) => (
+                      <button
+                        key={item.name + item.hex}
+                        onClick={() => handlePickPreset(item.hex, true)}
+                        className={`h-7 rounded-lg border-2 transition-transform active:scale-90 cursor-pointer ${
+                          currentColor.toLowerCase() === item.hex.toLowerCase()
+                            ? 'border-white scale-110 shadow-lg ring-2 ring-blue-500 z-10'
+                            : 'border-slate-700/80 hover:scale-105 hover:border-slate-400'
+                        }`}
+                        style={{ backgroundColor: item.hex }}
+                        title={`${item.name} (${item.hex})`}
+                        aria-label={item.name}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-
-              <div>
-                <span className="text-[11px] font-bold text-slate-400 block mb-1.5 uppercase tracking-wider">
-                  Flourish Palette
-                </span>
-                <div className="grid grid-cols-6 gap-2">
-                  {flourishPalette.map((hex) => (
-                    <button
-                      key={hex}
-                      onClick={() => handlePickPreset(hex)}
-                      className={`h-8 rounded-lg border-2 transition-transform active:scale-90 cursor-pointer ${
-                        currentColor.toLowerCase() === hex.toLowerCase()
-                          ? 'border-white scale-110 shadow-lg ring-2 ring-blue-500'
-                          : 'border-slate-700 hover:scale-105'
-                      }`}
-                      style={{ backgroundColor: hex }}
-                      aria-label={hex}
-                    />
-                  ))}
-                </div>
-              </div>
+              ))}
             </div>
           )}
 
@@ -357,7 +360,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             <button
               onClick={() => {
                 const s = getRandomColor();
-                handlePickPreset(s.hex);
+                handlePickPreset(s.hex, true);
               }}
               className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer transition-colors"
               title="Random color"
@@ -371,7 +374,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             {COLOR_SWATCHES.slice(0, 9).map((sw) => (
               <button
                 key={sw.hex}
-                onClick={() => handlePickPreset(sw.hex)}
+                onClick={() => handlePickPreset(sw.hex, true)}
                 className={`w-7 h-7 rounded-lg border shrink-0 transition-transform active:scale-90 cursor-pointer ${
                   currentColor.toLowerCase() === sw.hex.toLowerCase()
                     ? 'border-white scale-110 ring-2 ring-blue-500'
