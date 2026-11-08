@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical, Maximize2 } from 'lucide-react';
+import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical, Maximize2, BookOpen } from 'lucide-react';
 import { DrawingTemplate, Point, Stroke, ToolType } from '../types';
 import {
   getCanvasCoordinates,
@@ -328,6 +328,9 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
     renderStrokeToContext(ctx, stroke, 'canvas');
   };
 
+  // Offscreen layer for user strokes to prevent eraser from destroying underlying Paint Book template pictures
+  const strokesCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   // Render all strokes onto the canvas
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -335,35 +338,52 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!strokesCanvasRef.current) {
+      strokesCanvasRef.current = document.createElement('canvas');
+    }
+    const strokesCanvas = strokesCanvasRef.current;
+    if (strokesCanvas.width !== canvas.width || strokesCanvas.height !== canvas.height) {
+      strokesCanvas.width = canvas.width;
+      strokesCanvas.height = canvas.height;
+    }
+    const strokesCtx = strokesCanvas.getContext('2d');
+    if (!strokesCtx) return;
 
-    // 1. Fill crisp white drawing paper background
+    // 1. Clear both main canvas and user strokes layer
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    strokesCtx.clearRect(0, 0, strokesCanvas.width, strokesCanvas.height);
+
+    // 2. Render all user strokes onto isolated user strokes layer
+    for (const stroke of strokes) {
+      drawStroke(strokesCtx, stroke);
+    }
+    if (currentStrokeRef.current) {
+      drawStroke(strokesCtx, currentStrokeRef.current);
+    }
+
+    // 3. Fill crisp white drawing paper background on main canvas
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 2. Draw stencil guide lines onto canvas context if active so flood fill detects stencil boundaries
+    // 4. Draw base Paint Book template guide onto canvas if active
     if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
       ctx.save();
-      ctx.globalAlpha = Math.max(0.3, templateOpacity);
+      ctx.globalAlpha = Math.max(0.35, templateOpacity);
       ctx.drawImage(loadedTemplateImage, 0, 0, canvas.width, canvas.height);
       ctx.restore();
     }
 
-    // 3. Draw all completed user strokes (including Paint Bucket flood fills)
-    for (const stroke of strokes) {
-      drawStroke(ctx, stroke);
-    }
+    // 5. Draw user painted strokes ON TOP of the paper and template image
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(strokesCanvas, 0, 0);
+    ctx.restore();
 
-    // 4. Draw active stroke if drawing
-    if (currentStrokeRef.current) {
-      drawStroke(ctx, currentStrokeRef.current);
-    }
-
-    // 5. Re-overlay crisp stencil outline lines over paint fills so stencil lines stay razor-sharp
+    // 6. Re-overlay crisp stencil outline lines OVER user paint so Paint Book pictures NEVER get erased or cleaned
     if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = Math.min(1.0, templateOpacity * 1.15);
+      ctx.globalAlpha = Math.min(1.0, templateOpacity * 1.25);
       ctx.drawImage(loadedTemplateImage, 0, 0, canvas.width, canvas.height);
       ctx.restore();
     }
@@ -401,16 +421,7 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
     currentStrokeRef.current = newStroke;
     prevMidPointRef.current = point;
     isDrawingRef.current = true;
-
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.save();
-      applyToolStyle(ctx, newStroke);
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, ctx.lineWidth / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
+    redrawCanvas();
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -429,41 +440,8 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
       canvasDimensions.height
     );
 
-    const points = currentStrokeRef.current.points;
-    points.push(point);
-
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      const len = points.length;
-      if (len === 2) {
-        const p0 = points[0];
-        const p1 = points[1];
-        const mid = getMidPoint(p0, p1);
-
-        ctx.save();
-        applyToolStyle(ctx, currentStrokeRef.current);
-        ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(mid.x, mid.y);
-        ctx.stroke();
-        ctx.restore();
-
-        prevMidPointRef.current = mid;
-      } else if (len >= 3 && prevMidPointRef.current) {
-        const pPrev = points[len - 2];
-        const currentMid = getMidPoint(pPrev, point);
-
-        ctx.save();
-        applyToolStyle(ctx, currentStrokeRef.current);
-        ctx.beginPath();
-        ctx.moveTo(prevMidPointRef.current.x, prevMidPointRef.current.y);
-        ctx.quadraticCurveTo(pPrev.x, pPrev.y, currentMid.x, currentMid.y);
-        ctx.stroke();
-        ctx.restore();
-
-        prevMidPointRef.current = currentMid;
-      }
-    }
+    currentStrokeRef.current.points.push(point);
+    redrawCanvas();
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -479,22 +457,6 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
       // ignore
     }
 
-    const canvas = canvasRef.current;
-    if (canvas && currentStrokeRef.current && prevMidPointRef.current) {
-      const ctx = canvas.getContext('2d');
-      const points = currentStrokeRef.current.points;
-      if (ctx && points.length > 1) {
-        const last = points[points.length - 1];
-        ctx.save();
-        applyToolStyle(ctx, currentStrokeRef.current);
-        ctx.beginPath();
-        ctx.moveTo(prevMidPointRef.current.x, prevMidPointRef.current.y);
-        ctx.lineTo(last.x, last.y);
-        ctx.stroke();
-        ctx.restore();
-      }
-    }
-
     isDrawingRef.current = false;
     const completedStroke = currentStrokeRef.current;
     currentStrokeRef.current = null;
@@ -506,6 +468,8 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
         points: smoothPoints(completedStroke.points),
       };
       onStrokesChange([...strokes, smoothed]);
+    } else {
+      redrawCanvas();
     }
   };
 
@@ -781,7 +745,33 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
           </div>
         )}
 
+        {/* Blank Sheet Top HUD: Paint Books Banner On Top of Blank Sheet Canvas */}
+        {!activeTemplate && (
+          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-auto animate-in fade-in slide-in-from-top-1 duration-150">
+            <button
+              onClick={onOpenTemplates}
+              className="flex items-center gap-2 px-3.5 sm:px-4 py-1.5 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white border border-blue-400/80 shadow-md text-xs font-black cursor-pointer active:scale-95 transition-all select-none"
+              title="Open Paint Books Stencil Gallery"
+            >
+              <BookOpen className="w-4 h-4 text-white shrink-0" />
+              <span>Paint Books</span>
+              <span className="bg-white/20 text-white text-[9.5px] px-2 py-0.5 rounded-full font-bold ml-1 uppercase tracking-wider hidden xs:inline">
+                Select Picture
+              </span>
+            </button>
 
+            {lastClosedTemplate && onRestoreTemplate && (
+              <button
+                onClick={onRestoreTemplate}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 hover:bg-white text-blue-700 border border-blue-300 shadow-sm text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-md"
+                title={`Restore ${lastClosedTemplate.name}`}
+              >
+                <span className="text-sm font-black text-blue-600 leading-none">↶</span>
+                <span className="hidden xs:inline">Restore Book</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Canvas & Tracing Layer Container with Smooth Transform Zoom & Pan */}
         <div

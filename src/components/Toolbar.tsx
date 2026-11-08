@@ -8,9 +8,12 @@ import {
   Eraser,
   Shuffle,
   Layers,
+  Sun,
+  Moon,
+  Pipette,
 } from 'lucide-react';
 import { ToolType } from '../types';
-import { getRandomColor } from '../data/creative';
+import { COLOR_SWATCHES, getRandomColor } from '../data/creative';
 import { ColorsModal } from './ColorsModal';
 
 interface ToolbarProps {
@@ -24,6 +27,8 @@ interface ToolbarProps {
   onOpacityChange: (opacity: number) => void;
   onOpenTemplates: () => void;
   onLuckyColor: (name: string, hex: string) => void;
+  themeMode: 'bright' | 'dark';
+  onToggleTheme: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -37,6 +42,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onOpacityChange,
   onOpenTemplates,
   onLuckyColor,
+  themeMode,
+  onToggleTheme,
 }) => {
   const [showSizeModal, setShowSizeModal] = useState<boolean>(false);
   const [showColorStudio, setShowColorStudio] = useState<boolean>(false);
@@ -97,7 +104,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     },
     {
       id: 'brush',
-      label: 'Paint Brush',
+      label: 'Brush',
       icon: (active, color) => (
         <div className="relative flex items-center justify-center">
           <svg className="w-5 h-5 drop-shadow-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -117,7 +124,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     },
     {
       id: 'bucket',
-      label: 'Paint Bucket',
+      label: 'Bucket',
       icon: (active, color) => (
         <div className="relative flex items-center justify-center">
           <svg className="w-5 h-5 drop-shadow-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -183,15 +190,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         onClose={() => setShowColorStudio(false)}
         currentColor={currentColor}
         onColorChange={onColorChange}
+        themeMode={themeMode}
+        onToggleTheme={onToggleTheme}
       />
 
       {/* Firmly Anchored Bottom Toolbar - Completely Static Studio Dock */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 w-full pointer-events-auto bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 shadow-[0_-8px_30px_rgba(0,0,0,0.4)] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 px-2 text-white">
+      <div className="fixed bottom-0 left-0 right-0 z-40 w-full pointer-events-auto bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 shadow-[0_-8px_30px_rgba(0,0,0,0.4)] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 px-2 text-white">
+
         {/* Brush Size Popover */}
         {showSizeModal && (
           <div
             ref={sizeModalRef}
-            className="absolute bottom-16 left-1/2 -translate-x-1/2 w-[92vw] max-w-xs p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl flex flex-col gap-3.5 text-xs text-white z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+            className="absolute bottom-28 left-1/2 -translate-x-1/2 w-[92vw] max-w-xs p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl flex flex-col gap-3.5 text-xs text-white z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
               <span className="font-bold text-slate-200">Brush Thickness & Opacity</span>
@@ -272,9 +282,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           </div>
         )}
 
-        {/* Stable Nav Grid: Every button has fixed width and height so nothing ever moves or shifts */}
+        {/* Tightly Packed Paint Studio Tool Bar */}
         <nav
-          className="max-w-xl mx-auto flex items-center justify-between gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar"
+          className="max-w-2xl mx-auto flex items-center justify-start sm:justify-center gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar px-1 py-0.5"
           aria-label="Drawing Tools Navigation"
         >
           {/* Real Studio Tools */}
@@ -287,23 +297,23 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   onToolSelect(t.id);
                   setShowSizeModal(false);
                 }}
-                className={`w-11 sm:w-12 h-12 flex-1 max-w-[58px] rounded-xl flex flex-col items-center justify-center cursor-pointer select-none shrink-0 transition-all ${
+                className={`min-w-[48px] sm:min-w-[54px] h-12 sm:h-13 rounded-xl flex flex-col items-center justify-center cursor-pointer select-none shrink-0 transition-all ${
                   isActive
                     ? 'bg-gradient-to-b from-blue-600 to-blue-700 text-white shadow-lg ring-2 ring-blue-400/60 scale-[1.03]'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/90'
                 }`}
                 title={t.label}
                 aria-label={`Select ${t.label} tool`}
               >
                 {t.icon(isActive, currentColor)}
-                <span className="text-[8px] sm:text-[9.5px] font-bold mt-0.5 leading-none text-center truncate max-w-full px-0.5">
+                <span className="text-[9.5px] sm:text-[10px] font-black mt-1 leading-none text-center truncate max-w-full px-0.5 tracking-tight">
                   {t.label}
                 </span>
               </button>
             );
           })}
 
-          <div className="h-6 w-[1px] bg-slate-800 shrink-0 mx-0.5" />
+          <div className="h-6 w-[1.5px] bg-slate-800 shrink-0 mx-0.5 rounded-full" />
 
           {/* Size Button */}
           <button
@@ -311,7 +321,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             onClick={() => {
               setShowSizeModal(!showSizeModal);
             }}
-            className={`w-11 h-12 rounded-xl flex flex-col items-center justify-center border cursor-pointer select-none transition-all ${
+            className={`min-w-[48px] sm:min-w-[54px] h-12 sm:h-13 rounded-xl flex flex-col items-center justify-center border cursor-pointer select-none transition-all shrink-0 ${
               showSizeModal
                 ? 'bg-blue-600/30 border-blue-500 text-blue-300'
                 : 'bg-slate-800/90 border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white'
@@ -327,7 +337,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 backgroundColor: currentTool === 'eraser' ? '#94A3B8' : currentColor,
               }}
             />
-            <span className="text-[9px] font-mono font-bold">{currentSize}px</span>
+            <span className="text-[9.5px] font-mono font-bold">{currentSize}px</span>
           </button>
 
           {/* Procreate Color Wheel/Disc Button */}
@@ -336,7 +346,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               setShowColorStudio(true);
               setShowSizeModal(false);
             }}
-            className="w-11 h-12 rounded-xl flex flex-col items-center justify-center border border-slate-700/80 bg-slate-800/90 hover:bg-slate-800 transition-all cursor-pointer select-none"
+            className="min-w-[48px] sm:min-w-[54px] h-12 sm:h-13 rounded-xl flex flex-col items-center justify-center border border-slate-700/80 bg-slate-800/90 hover:bg-slate-800 transition-all cursor-pointer select-none shrink-0"
             title="Open Color Palette"
             aria-label="Color Palette"
           >
@@ -344,29 +354,30 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               className="w-4 h-4 rounded-full border-2 border-white/90 shadow-md mb-0.5 ring-1 ring-black/40"
               style={{ backgroundColor: currentColor }}
             />
-            <span className="text-[9px] font-bold text-slate-200">Color</span>
+            <span className="text-[9.5px] font-black text-slate-200">Color</span>
           </button>
+
 
           {/* Surprise Lucky Color Button */}
           <button
             onClick={handleRandomColorClick}
-            className="w-10 h-12 rounded-xl text-slate-400 hover:text-blue-400 hover:bg-slate-800/80 flex flex-col items-center justify-center transition-colors cursor-pointer select-none"
+            className="min-w-[44px] sm:min-w-[48px] h-12 sm:h-13 rounded-xl text-slate-400 hover:text-blue-400 hover:bg-slate-800/90 flex flex-col items-center justify-center transition-colors cursor-pointer select-none shrink-0"
             title="Random color"
             aria-label="Random color suggestion"
           >
-            <Shuffle className="w-4 h-4 text-blue-400" />
-            <span className="text-[9px] font-bold">Lucky</span>
+            <Shuffle className="w-3.5 h-3.5 text-blue-400" />
+            <span className="text-[9.5px] font-black mt-0.5">Lucky</span>
           </button>
 
           {/* Paint Books Trigger */}
           <button
             onClick={onOpenTemplates}
-            className="w-11 h-12 rounded-xl bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white border border-blue-400/50 flex flex-col items-center justify-center cursor-pointer select-none shadow-md transition-all active:scale-95"
+            className="min-w-[52px] sm:min-w-[58px] h-12 sm:h-13 rounded-xl bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white border border-blue-400/50 flex flex-col items-center justify-center cursor-pointer select-none shadow-md transition-all active:scale-95 shrink-0"
             title="Open Paint Books Stencil Gallery"
             aria-label="Drawing Templates"
           >
-            <Layers className="w-4 h-4 text-white" />
-            <span className="text-[9px] font-bold text-white">Books</span>
+            <Layers className="w-3.5 h-3.5 text-white" />
+            <span className="text-[9.5px] font-black text-white mt-0.5">Books</span>
           </button>
         </nav>
       </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Pipette, Shuffle } from 'lucide-react';
+import { X, Pipette, Shuffle, Sun, Moon } from 'lucide-react';
 import { hexToRgb, rgbToHex, rgbToHsv, hsvToRgb } from '../utils/color';
 import {
   COLOR_SWATCHES,
@@ -17,6 +17,8 @@ interface ColorsModalProps {
   onClose: () => void;
   currentColor: string;
   onColorChange: (hex: string) => void;
+  themeMode?: 'bright' | 'dark';
+  onToggleTheme?: () => void;
 }
 
 export const ColorsModal: React.FC<ColorsModalProps> = ({
@@ -24,6 +26,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
   onClose,
   currentColor,
   onColorChange,
+  themeMode,
+  onToggleTheme,
 }) => {
   const [activeTab, setActiveTab] = useState<'spectrum' | 'sliders' | 'palettes'>('spectrum');
   const [rgb, setRgb] = useState<{ r: number; g: number; b: number }>(() => hexToRgb(currentColor));
@@ -146,13 +150,13 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-md p-0 sm:p-4 animate-in fade-in duration-200 cursor-pointer"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-md p-0 sm:p-4 animate-in fade-in duration-200 cursor-pointer"
       role="dialog"
       aria-modal="true"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-sm bg-slate-900 border-t sm:border border-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-white cursor-default"
+        className="w-full sm:max-w-sm bg-slate-900 border-t sm:border border-slate-800/90 rounded-t-3xl sm:rounded-2xl shadow-[0_-8px_35px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden text-white cursor-default max-h-[85vh]"
       >
         {/* Hidden Native Input */}
         <input
@@ -163,14 +167,16 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
           className="hidden"
         />
 
-        {/* Top Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950">
-          <div className="flex items-center gap-3">
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider">Accurate Color Studio</h2>
+        {/* Top Header of Open Color Studio Modal */}
+        <div className="p-3 sm:p-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider">
+              Color Studio
+            </h2>
             {/* Split Swatch: Previous vs Active Selected Color */}
-            <div className="flex items-center rounded-lg overflow-hidden border border-slate-700 h-6 w-14 shadow-inner">
+            <div className="flex items-center rounded-lg overflow-hidden border border-slate-700 h-6 w-12 shadow-inner">
               <div
-                className="w-1/2 h-full cursor-pointer"
+                className="w-1/2 h-full cursor-pointer hover:opacity-90"
                 style={{ backgroundColor: previousColor }}
                 title="Previous color (Tap to revert)"
                 onClick={() => handlePickPreset(previousColor)}
@@ -183,16 +189,43 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white transition-all cursor-pointer shadow-sm active:scale-95"
-          >
-            Apply
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Upper Color Studio Bright / Dark Mode Toggle Button */}
+            {onToggleTheme && (
+              <button
+                onClick={onToggleTheme}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl border text-[10px] sm:text-xs font-bold transition-all cursor-pointer active:scale-95 ${
+                  themeMode === 'dark'
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                    : 'bg-blue-500/20 text-blue-300 border-blue-400/40 hover:bg-blue-500/30'
+                }`}
+                title={themeMode === 'dark' ? 'Switch to Bright Mode' : 'Switch to Dark Mode'}
+              >
+                {themeMode === 'dark' ? (
+                  <>
+                    <Sun className="w-3 h-3 text-amber-400" />
+                    <span>Bright Mode</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3 h-3 text-blue-400" />
+                    <span>Dark Mode</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            <button
+              onClick={onClose}
+              className="px-3.5 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-xs text-white shadow-sm active:scale-95 transition-all cursor-pointer"
+            >
+              Apply
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
-        <div className="p-4 sm:p-5 flex flex-col items-center gap-4 text-xs">
+        <div className="p-3.5 sm:p-4 flex flex-col items-center gap-3 text-xs overflow-y-auto max-h-[70vh]">
           {activeTab === 'spectrum' && (
             <>
               {/* High-Precision 2D HSV Saturation-Value Canvas Box */}
@@ -202,7 +235,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 onPointerMove={handleSpectrumPointerMove}
                 onPointerUp={handleSpectrumPointerUp}
                 onPointerCancel={handleSpectrumPointerUp}
-                className="relative w-full h-48 rounded-2xl cursor-crosshair select-none overflow-hidden shadow-inner border border-slate-700 touch-none"
+                className="relative w-full h-44 sm:h-48 rounded-xl cursor-crosshair select-none overflow-hidden shadow-inner border border-slate-700 touch-none"
                 style={{
                   backgroundColor: `hsl(${hsv.h}, 100%, 50%)`,
                   backgroundImage: `
@@ -224,9 +257,9 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
 
               {/* Hue 0-360 Spectrum Slider */}
               <div className="w-full flex flex-col gap-1">
-                <div className="flex justify-between text-[11px] font-bold text-slate-400">
+                <div className="flex justify-between text-[11px] font-bold text-slate-300">
                   <span>Hue Spectrum</span>
-                  <span>{hsv.h}°</span>
+                  <span className="font-mono text-blue-400">{hsv.h}°</span>
                 </div>
                 <input
                   type="range"
@@ -245,12 +278,12 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
           )}
 
           {activeTab === 'sliders' && (
-            <div className="w-full flex flex-col gap-3.5 py-1">
+            <div className="w-full flex flex-col gap-3 py-1">
               {/* Red Slider */}
               <div>
                 <div className="flex justify-between text-[11px] font-bold text-red-400 mb-1">
                   <span>Red (R)</span>
-                  <span>{rgb.r}</span>
+                  <span className="font-mono">{rgb.r}</span>
                 </div>
                 <input
                   type="range"
@@ -258,7 +291,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="255"
                   value={rgb.r}
                   onChange={(e) => updateFromRgb({ ...rgb, r: parseInt(e.target.value, 10) })}
-                  className="w-full h-2.5 rounded-lg cursor-pointer accent-red-500"
+                  className="w-full h-2.5 rounded-lg cursor-pointer accent-red-500 bg-slate-800"
                 />
               </div>
 
@@ -266,7 +299,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
               <div>
                 <div className="flex justify-between text-[11px] font-bold text-emerald-400 mb-1">
                   <span>Green (G)</span>
-                  <span>{rgb.g}</span>
+                  <span className="font-mono">{rgb.g}</span>
                 </div>
                 <input
                   type="range"
@@ -274,7 +307,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="255"
                   value={rgb.g}
                   onChange={(e) => updateFromRgb({ ...rgb, g: parseInt(e.target.value, 10) })}
-                  className="w-full h-2.5 rounded-lg cursor-pointer accent-emerald-500"
+                  className="w-full h-2.5 rounded-lg cursor-pointer accent-emerald-500 bg-slate-800"
                 />
               </div>
 
@@ -282,7 +315,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
               <div>
                 <div className="flex justify-between text-[11px] font-bold text-blue-400 mb-1">
                   <span>Blue (B)</span>
-                  <span>{rgb.b}</span>
+                  <span className="font-mono">{rgb.b}</span>
                 </div>
                 <input
                   type="range"
@@ -290,14 +323,14 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="255"
                   value={rgb.b}
                   onChange={(e) => updateFromRgb({ ...rgb, b: parseInt(e.target.value, 10) })}
-                  className="w-full h-2.5 rounded-lg cursor-pointer accent-blue-500"
+                  className="w-full h-2.5 rounded-lg cursor-pointer accent-blue-500 bg-slate-800"
                 />
               </div>
             </div>
           )}
 
           {activeTab === 'palettes' && (
-            <div className="w-full flex flex-col gap-4 py-1 max-h-60 overflow-y-auto pr-1">
+            <div className="w-full flex flex-col gap-4 py-1 max-h-56 overflow-y-auto pr-1">
               {[
                 { title: 'Classic MS Paint Box', items: CLASSIC_PAINT_BOX },
                 { title: 'Skin & Portrait Tones', items: SKIN_TONE_PALETTE },
@@ -307,17 +340,17 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 { title: 'Jewel & Metallic Tones', items: JEWEL_METALLIC_PALETTE },
               ].map((section) => (
                 <div key={section.title}>
-                  <span className="text-[10.5px] font-bold text-slate-400 block mb-1.5 uppercase tracking-wider">
+                  <span className="text-[10.5px] font-black text-slate-300 block mb-1.5 uppercase tracking-wider">
                     {section.title}
                   </span>
-                  <div className="grid grid-cols-6 sm:grid-cols-8 gap-1.5">
+                  <div className="grid grid-cols-7 sm:grid-cols-9 gap-1">
                     {section.items.map((item) => (
                       <button
                         key={item.name + item.hex}
                         onClick={() => handlePickPreset(item.hex, true)}
-                        className={`h-7 rounded-lg border-2 transition-transform active:scale-90 cursor-pointer ${
+                        className={`h-6.5 sm:h-6 rounded-md border transition-transform active:scale-90 cursor-pointer ${
                           currentColor.toLowerCase() === item.hex.toLowerCase()
-                            ? 'border-white scale-110 shadow-lg ring-2 ring-blue-500 z-10'
+                            ? 'border-white scale-110 shadow-md ring-2 ring-blue-500 z-10'
                             : 'border-slate-700/80 hover:scale-105 hover:border-slate-400'
                         }`}
                         style={{ backgroundColor: item.hex }}
@@ -334,7 +367,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
           {/* Precision HEX Input & Eyedropper Toolbar */}
           <div className="w-full flex items-center justify-between gap-2 pt-2 border-t border-slate-800">
             {/* Hex Input */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 flex-1">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 flex-1">
               <span className="text-slate-400 font-bold text-xs">HEX</span>
               <input
                 type="text"
@@ -342,17 +375,17 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 onChange={handleHexInputChange}
                 maxLength={7}
                 placeholder="#164BCE"
-                className="w-24 bg-transparent font-mono font-bold text-blue-400 uppercase text-xs focus:outline-none"
+                className="w-20 bg-transparent font-mono font-bold text-blue-400 uppercase text-xs focus:outline-none"
               />
             </div>
 
             {/* Native Eyedropper Trigger */}
             <button
               onClick={handleTriggerEyedropper}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 cursor-pointer active:scale-95 transition-all"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 cursor-pointer active:scale-95 transition-all text-xs"
               title="Pick exact color from screen"
             >
-              <Pipette className="w-3.5 h-3.5" />
+              <Pipette className="w-3.5 h-3.5 text-blue-300" />
               <span>Picker</span>
             </button>
 
@@ -362,20 +395,20 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 const s = getRandomColor();
                 handlePickPreset(s.hex, true);
               }}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer transition-colors"
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer transition-colors"
               title="Random color"
             >
               <Shuffle className="w-4 h-4 text-blue-400" />
             </button>
           </div>
 
-          {/* Swatches Quick Bar */}
+          {/* Swatches Quick Bar - Tightly Packed */}
           <div className="w-full flex items-center justify-between gap-1 overflow-x-auto pb-0.5 no-scrollbar">
-            {COLOR_SWATCHES.slice(0, 9).map((sw) => (
+            {COLOR_SWATCHES.slice(0, 10).map((sw) => (
               <button
                 key={sw.hex}
                 onClick={() => handlePickPreset(sw.hex, true)}
-                className={`w-7 h-7 rounded-lg border shrink-0 transition-transform active:scale-90 cursor-pointer ${
+                className={`w-6 h-6 rounded-md border shrink-0 transition-transform active:scale-90 cursor-pointer ${
                   currentColor.toLowerCase() === sw.hex.toLowerCase()
                     ? 'border-white scale-110 ring-2 ring-blue-500'
                     : 'border-slate-700'
@@ -388,7 +421,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="grid grid-cols-3 border-t border-slate-800 bg-slate-950 p-1 text-[11px] font-bold">
+        <div className="grid grid-cols-3 border-t border-slate-800 bg-slate-950 p-1 text-[11px] font-bold uppercase tracking-wider">
           <button
             onClick={() => setActiveTab('spectrum')}
             className={`py-2 rounded-xl transition-all cursor-pointer ${

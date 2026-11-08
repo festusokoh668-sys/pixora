@@ -28,7 +28,16 @@ export default function App() {
   const [size, setSize] = useState<number>(8);
   const [opacity, setOpacity] = useState<number>(1.0);
 
-  // Strokes and History
+  // Theme Mode State (Bright Mode vs Dark Mode)
+  const [themeMode, setThemeMode] = useState<'bright' | 'dark'>('bright');
+
+  const handleToggleTheme = () => {
+    setThemeMode((prev) => {
+      const next = prev === 'bright' ? 'dark' : 'bright';
+      showToast(`${next === 'bright' ? 'Bright Mode' : 'Dark Mode'} Active`);
+      return next;
+    });
+  };
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const historyRef = useRef<HistoryManager>(new HistoryManager(35));
   const [canUndo, setCanUndo] = useState<boolean>(false);
@@ -280,6 +289,8 @@ export default function App() {
             onOpenGallery={() => setIsGalleryModalOpen(true)}
             onOpenSpark={() => setIsSparkModalOpen(true)}
             onShare={handleShareStudio}
+            themeMode={themeMode}
+            onToggleTheme={handleToggleTheme}
             activeTemplate={activeTemplate}
             savedCount={savedArtworks.length}
             templateOpacity={templateOpacity}
@@ -291,8 +302,12 @@ export default function App() {
             onRedo={handleRedo}
           />
 
-          {/* Canvas Working Area: Mixed Royalty Blue & Crisp White */}
-          <main className="flex-1 flex flex-col items-center justify-center relative overflow-hidden bg-gradient-to-br from-blue-50/40 via-white/50 to-blue-900/10">
+          {/* Canvas Working Area */}
+          <main className={`flex-1 flex flex-col items-center justify-center relative overflow-hidden transition-colors ${
+            themeMode === 'dark'
+              ? 'bg-slate-950'
+              : 'bg-gradient-to-br from-blue-50/40 via-white/50 to-blue-900/10'
+          }`}>
             <CanvasStudio
               tool={tool}
               color={color}
@@ -322,6 +337,8 @@ export default function App() {
             onOpacityChange={setOpacity}
             onOpenTemplates={() => setIsTemplateModalOpen(true)}
             onLuckyColor={handleLuckyColor}
+            themeMode={themeMode}
+            onToggleTheme={handleToggleTheme}
           />
 
           {/* Template Gallery Modal */}

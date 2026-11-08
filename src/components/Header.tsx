@@ -1,5 +1,5 @@
 import React from 'react';
-import { Lightbulb, Image as ImageIcon, Download, Trash2, Home, Sliders, Undo2, Redo2, Share2 } from 'lucide-react';
+import { Lightbulb, Image as ImageIcon, Download, Trash2, Home, Sliders, Undo2, Redo2, Share2, Sun, Moon } from 'lucide-react';
 import { DrawingTemplate } from '../types';
 
 interface HeaderProps {
@@ -10,6 +10,8 @@ interface HeaderProps {
   onOpenGallery: () => void;
   onOpenSpark: () => void;
   onShare: () => void;
+  themeMode: 'bright' | 'dark';
+  onToggleTheme: () => void;
   activeTemplate: DrawingTemplate | null;
   savedCount: number;
   templateOpacity: number;
@@ -29,6 +31,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenGallery,
   onOpenSpark,
   onShare,
+  themeMode,
+  onToggleTheme,
   activeTemplate,
   savedCount,
   strokesCount,
@@ -37,28 +41,38 @@ export const Header: React.FC<HeaderProps> = ({
   onUndo,
   onRedo,
 }) => {
+  const isDark = themeMode === 'dark';
+
   return (
-    <header className="sticky top-0 z-30 w-full bg-white/90 backdrop-blur-xl border-b border-blue-200/80 shadow-[0_4px_20px_rgba(22,75,206,0.08)] px-2 sm:px-6 py-2.5 transition-all">
+    <header className={`sticky top-0 z-30 w-full backdrop-blur-xl border-b transition-colors ${
+      isDark
+        ? 'bg-slate-950/95 border-slate-800 shadow-[0_4px_20px_rgba(0,0,0,0.5)] text-white'
+        : 'bg-white/90 border-blue-200/80 shadow-[0_4px_20px_rgba(22,75,206,0.08)] text-slate-900'
+    } px-2 sm:px-6 py-2.5`}>
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-1.5 sm:gap-4">
-        {/* Zone 1: Home Button (Website name and logo removed when in studio) */}
+        {/* Zone 1: Home Button */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           <button
             onClick={onBackToHome}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-600 hover:text-blue-700 hover:bg-blue-50 border border-slate-200/80 transition-colors cursor-pointer flex items-center gap-1.5"
+            className={`p-1.5 sm:p-2 rounded-xl border transition-colors cursor-pointer flex items-center gap-1.5 ${
+              isDark
+                ? 'border-slate-800 text-slate-200 hover:bg-slate-900'
+                : 'border-slate-200/80 text-slate-600 hover:text-blue-700 hover:bg-blue-50'
+            }`}
             title="Return to Home"
             aria-label="Return to Home"
           >
             <Home className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
-            <span className="text-xs font-bold text-slate-700 hidden sm:inline">Home</span>
+            <span className="text-xs font-bold hidden sm:inline">Home</span>
           </button>
         </div>
 
-        {/* Center: Tracing template indicator if active */}
+        {/* Center: Tracing template indicator & Theme Toggle */}
         <div className="flex items-center gap-1.5 shrink-0">
           {activeTemplate && (
             <button
               onClick={onOpenTemplates}
-              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[190px] cursor-pointer font-medium"
+              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors max-w-[110px] sm:max-w-[190px] cursor-pointer font-medium"
               title="Change guided template"
             >
               <Sliders className="w-3 h-3 text-blue-600 shrink-0" />
@@ -66,10 +80,38 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* Bright Mode / Dark Mode Toggle Button */}
+          <button
+            onClick={onToggleTheme}
+            className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer active:scale-95 shadow-sm ${
+              isDark
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+            }`}
+            title={isDark ? 'Switch to Bright Mode' : 'Switch to Dark Mode'}
+            aria-label="Toggle Bright/Dark Mode"
+          >
+            {isDark ? (
+              <>
+                <Sun className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">Bright Mode</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-4 h-4 text-blue-600" />
+                <span className="hidden sm:inline">Dark Mode</span>
+              </>
+            )}
+          </button>
+
           {/* Quick Tips */}
           <button
             onClick={onOpenSpark}
-            className="p-1.5 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 transition-colors cursor-pointer"
+            className={`p-1.5 rounded-xl border transition-colors cursor-pointer ${
+              isDark
+                ? 'border-slate-800 text-slate-300 hover:bg-slate-900'
+                : 'border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50'
+            }`}
             title="Drawing Tips & Studio Harmonizers"
             aria-label="Drawing Tips"
           >
@@ -79,7 +121,11 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Share Button */}
           <button
             onClick={onShare}
-            className="p-1.5 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 transition-colors cursor-pointer"
+            className={`p-1.5 rounded-xl border transition-colors cursor-pointer ${
+              isDark
+                ? 'border-slate-800 text-slate-300 hover:bg-slate-900'
+                : 'border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50'
+            }`}
             title="Share Studio or Paint Book"
             aria-label="Share Link"
           >
