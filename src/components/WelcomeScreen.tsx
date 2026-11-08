@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 
 interface WelcomeScreenProps {
   onStartCreating: () => void;
@@ -26,9 +26,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       {/* Top Navigation Bar */}
       <nav className="w-full max-w-6xl mx-auto px-4 sm:px-8 py-5 flex items-center justify-between z-10">
         <div className="flex items-center gap-2.5">
-          {/* Formal Logo Badge */}
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0F3AA8] via-[#164BCE] to-[#3B82F6] flex items-center justify-center shadow-lg shadow-blue-600/30 border border-blue-300/40">
-            <span className="text-white font-black text-xl tracking-tighter">P</span>
+          {/* User's Uploaded Logo */}
+          <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-600/30 border border-blue-300/40">
+            <img src="/user_logo.jpg" alt="Pixora Logo" className="w-full h-full object-cover" />
           </div>
           <span className="font-black text-2xl sm:text-3xl tracking-wider uppercase text-slate-950 font-sans">
             PIX<span className="text-[#164BCE]">ORA</span>
@@ -56,18 +56,20 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           Relax, draw, trace and bring your imagination to life with precision drawing tools and real paint books.
         </p>
 
+        {/* Flashy & Sparkling Start Creating CTA Button */}
         <div className="w-full sm:w-auto flex flex-col items-center justify-center gap-3">
           <button
             onClick={onStartCreating}
-            className="w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-blue-700 to-blue-800 hover:from-blue-500 hover:to-blue-700 text-white font-black text-base sm:text-lg shadow-[0_12px_35px_rgba(22,75,206,0.38)] hover:shadow-[0_16px_45px_rgba(22,75,206,0.5)] border border-white/70 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative"
+            className="btn-glitter w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl text-white font-black text-base sm:text-xl shadow-[0_14px_40px_rgba(22,75,206,0.45)] hover:shadow-[0_20px_50px_rgba(22,75,206,0.6)] border-2 border-white/80 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative ring-4 ring-blue-500/20 animate-pulse"
           >
-            <span className="relative z-10 text-white font-black text-lg sm:text-xl tracking-wide uppercase drop-shadow-sm">
+            <Sparkles className="w-5 h-5 text-amber-300 sparkle-star relative z-10 shrink-0" />
+            <span className="relative z-10 text-white font-black text-lg sm:text-xl tracking-wide uppercase drop-shadow-md">
               Start Creating
             </span>
-            <ArrowRight className="w-5 h-5 text-white relative z-10 group-hover:translate-x-1.5 transition-transform" />
+            <ArrowRight className="w-5 h-5 text-white relative z-10 group-hover:translate-x-1.5 transition-transform shrink-0" />
           </button>
           <span className="text-[11px] font-semibold text-slate-500">
-            Instant freehand canvas · Smooth stroke stabilization
+            Instant freehand canvas · Real Paint Books · Smooth stroke stabilization
           </span>
         </div>
       </main>
