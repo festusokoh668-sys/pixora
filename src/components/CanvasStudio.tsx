@@ -745,25 +745,57 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
           </div>
         )}
 
-        {/* Blank Sheet Top HUD: Paint Books Banner On Top of Blank Sheet Canvas */}
+        {/* Blank Sheet Top HUD: Draggable Paint Books Banner On Top of Blank Sheet Canvas */}
         {!activeTemplate && (
-          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-auto animate-in fade-in slide-in-from-top-1 duration-150">
-            <button
-              onClick={onOpenTemplates}
-              className="flex items-center gap-2 px-3.5 sm:px-4 py-1.5 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white border border-blue-400/80 shadow-md text-xs font-black cursor-pointer active:scale-95 transition-all select-none"
-              title="Open Paint Books Stencil Gallery"
+          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
+            <div
+              style={{
+                transform: `translate3d(${hudOffset.x}px, ${hudOffset.y}px, 0)`,
+                touchAction: 'none',
+              }}
+              onPointerDown={handleHudPointerDown}
+              onPointerMove={handleHudPointerMove}
+              onPointerUp={handleHudPointerUp}
+              onPointerCancel={handleHudPointerUp}
+              onDoubleClick={() => setHudOffset({ x: 0, y: 0 })}
+              className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border shadow-md transition-shadow select-none cursor-grab active:cursor-grabbing text-xs text-slate-800 pointer-events-auto ${
+                isDraggingHud
+                  ? 'border-blue-500 shadow-xl ring-2 ring-blue-400/40'
+                  : 'border-slate-200/90 hover:border-blue-300 hover:shadow-lg'
+              }`}
+              title="Click and drag to move Paint Books anywhere on the sheet (Double-click to reset position)"
             >
-              <BookOpen className="w-4 h-4 text-white shrink-0" />
-              <span>Paint Books</span>
-              <span className="bg-white/20 text-white text-[9.5px] px-2 py-0.5 rounded-full font-bold ml-1 uppercase tracking-wider hidden xs:inline">
-                Select Picture
-              </span>
-            </button>
+              {/* Drag Handle Grip Icon */}
+              <div
+                className="cursor-grab active:cursor-grabbing p-0.5 text-slate-400 hover:text-blue-600 flex items-center shrink-0"
+                title="Drag to move Paint Books anywhere on the sheet"
+              >
+                <GripVertical className="w-3.5 h-3.5" />
+              </div>
+
+              {/* Paint Books Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenTemplates();
+                }}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white shadow-sm border border-blue-400/80 text-xs font-black cursor-pointer active:scale-95 transition-all select-none"
+                title="Open Paint Books Stencil Gallery"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-white shrink-0" />
+                <span>Paint Books</span>
+                <span className="bg-white/20 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider hidden xs:inline">
+                  Select Picture
+                </span>
+              </button>
+            </div>
 
             {lastClosedTemplate && onRestoreTemplate && (
               <button
+                type="button"
                 onClick={onRestoreTemplate}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 hover:bg-white text-blue-700 border border-blue-300 shadow-sm text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-md"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 hover:bg-white text-blue-700 border border-blue-300 shadow-sm text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-md pointer-events-auto"
                 title={`Restore ${lastClosedTemplate.name}`}
               >
                 <span className="text-sm font-black text-blue-600 leading-none">↶</span>

@@ -1,10 +1,8 @@
 import React from 'react';
 import { ArrowRight } from 'lucide-react';
-import { DrawingTemplate } from '../types';
 
 interface WelcomeScreenProps {
   onStartCreating: () => void;
-  onSelectTemplateDirectly?: (template: DrawingTemplate) => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
@@ -28,6 +26,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       {/* Top Navigation Bar */}
       <nav className="w-full max-w-6xl mx-auto px-4 sm:px-8 py-5 flex items-center justify-between z-10">
         <div className="flex items-center gap-2.5">
+          {/* Formal Logo Badge */}
           <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0F3AA8] via-[#164BCE] to-[#3B82F6] flex items-center justify-center shadow-lg shadow-blue-600/30 border border-blue-300/40">
             <span className="text-white font-black text-xl tracking-tighter">P</span>
           </div>
@@ -60,7 +59,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         <div className="w-full sm:w-auto flex flex-col items-center justify-center gap-3">
           <button
             onClick={onStartCreating}
-            className="btn-glitter w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl text-white font-black text-base sm:text-lg shadow-[0_12px_35px_rgba(22,75,206,0.38)] hover:shadow-[0_16px_45px_rgba(22,75,206,0.5)] border border-white/70 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative"
+            className="w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-blue-700 to-blue-800 hover:from-blue-500 hover:to-blue-700 text-white font-black text-base sm:text-lg shadow-[0_12px_35px_rgba(22,75,206,0.38)] hover:shadow-[0_16px_45px_rgba(22,75,206,0.5)] border border-white/70 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative"
           >
             <span className="relative z-10 text-white font-black text-lg sm:text-xl tracking-wide uppercase drop-shadow-sm">
               Start Creating
