@@ -26,9 +26,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       {/* Top Navigation Bar */}
       <nav className="w-full max-w-6xl mx-auto px-4 sm:px-8 py-5 flex items-center justify-between z-10">
         <div className="flex items-center gap-2.5">
-          {/* User's Uploaded Logo */}
-          <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-600/30 border border-blue-300/40">
-            <img src="/user_logo.jpg" alt="Pixora Logo" className="w-full h-full object-cover" />
+          {/* Original Emblem Logo Badge */}
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0F3AA8] via-[#164BCE] to-[#3B82F6] flex items-center justify-center shadow-lg shadow-blue-600/30 border border-blue-300/40">
+            <span className="text-white font-black text-xl tracking-tighter">P</span>
           </div>
           <span className="font-black text-2xl sm:text-3xl tracking-wider uppercase text-slate-950 font-sans">
             PIX<span className="text-[#164BCE]">ORA</span>
@@ -62,7 +62,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             onClick={onStartCreating}
             className="btn-glitter w-full sm:w-auto px-10 sm:px-14 py-4 rounded-2xl text-white font-black text-base sm:text-xl shadow-[0_14px_40px_rgba(22,75,206,0.45)] hover:shadow-[0_20px_50px_rgba(22,75,206,0.6)] border-2 border-white/80 flex items-center justify-center gap-3 active:scale-95 transition-all group cursor-pointer relative ring-4 ring-blue-500/20 animate-pulse"
           >
-            <Sparkles className="w-5 h-5 text-amber-300 sparkle-star relative z-10 shrink-0" />
             <span className="relative z-10 text-white font-black text-lg sm:text-xl tracking-wide uppercase drop-shadow-md">
               Start Creating
             </span>
