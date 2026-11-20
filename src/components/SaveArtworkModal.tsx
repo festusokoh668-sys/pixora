@@ -40,7 +40,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   const [artworkTitle, setArtworkTitle] = useState<string>('');
   const [includeTemplateGuide, setIncludeTemplateGuide] = useState<boolean>(false);
   const [previewDataUrl, setPreviewDataUrl] = useState<string>('');
-  const [exportFormat, setExportFormat] = useState<'png' | 'svg'>('png');
+  const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'svg'>('png');
   const [pngResolution, setPngResolution] = useState<1 | 2 | 4>(2); // Default to 2x (2400x2400 High-Res)
   const [isSavedSuccessfully, setIsSavedSuccessfully] = useState<boolean>(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
@@ -60,7 +60,10 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   }, [isOpen, activeTemplate]);
 
   // Generate high-resolution export canvas data URL matching studio canvas dimensions
-  const renderExportCanvasDataUrl = (scale: number): string => {
+  const renderExportCanvasDataUrl = (
+    scale: number,
+    format: 'png' | 'jpg' = 'png'
+  ): string => {
     const baseW = Math.max(300, canvasDimensions.width);
     const baseH = Math.max(300, canvasDimensions.height);
     const exportCanvas = document.createElement('canvas');
@@ -119,7 +122,10 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
     ctx.fillText('PIXORA Studio', 32, baseH - 32);
     ctx.restore();
 
-    return exportCanvas.toDataURL('image/png');
+    return exportCanvas.toDataURL(
+      format === 'jpg' ? 'image/jpeg' : 'image/png',
+      0.92
+    );
   };
 
   // Generate preview data URL on 1200x1200 export canvas
@@ -198,11 +204,15 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } else {
-      // High-resolution PNG at selected scale
-      const pngUrl = pngResolution === 1 ? previewDataUrl : renderExportCanvasDataUrl(pngResolution);
+      // High-resolution JPG or PNG at selected scale
+      const rasterFormat = exportFormat === 'jpg' ? 'jpg' : 'png';
+      const rasterUrl =
+        rasterFormat === 'png' && pngResolution === 1
+          ? previewDataUrl
+          : renderExportCanvasDataUrl(pngResolution, rasterFormat);
       const link = document.createElement('a');
-      link.download = generateArtworkFilename(artworkTitle, 'png');
-      link.href = pngUrl;
+      link.download = generateArtworkFilename(artworkTitle, rasterFormat);
+      link.href = rasterUrl;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -365,9 +375,9 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
               </div>
             )}
             <div className="absolute top-3 right-3 px-2.5 py-1 rounded-lg bg-slate-900/75 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-wider">
-              {exportFormat === 'png'
-                ? `${canvasDimensions.width * pngResolution}×${canvasDimensions.height * pngResolution} PNG`
-                : 'Scalable SVG'}
+              {exportFormat === 'svg'
+                ? 'Scalable SVG'
+                : `${canvasDimensions.width * pngResolution}×${canvasDimensions.height * pngResolution} ${exportFormat.toUpperCase()}`}
             </div>
           </div>
 
@@ -390,39 +400,54 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
             <label className="block text-slate-700 font-bold mb-1.5">
               Export Format
             </label>
-            <div className="grid grid-cols-2 gap-2 bg-slate-200/70 p-1 rounded-2xl">
+            <div className="grid grid-cols-3 gap-2 bg-slate-200/70 p-1 rounded-2xl">
               <button
                 type="button"
+                data-testid="modal-format-png"
                 onClick={() => setExportFormat('png')}
-                className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer ${
                   exportFormat === 'png'
                     ? 'bg-white text-blue-700 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <ImageIcon className="w-4 h-4 text-blue-600" />
-                <span>High-Res PNG</span>
+                <span>PNG</span>
               </button>
               <button
                 type="button"
+                data-testid="modal-format-jpg"
+                onClick={() => setExportFormat('jpg')}
+                className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer ${
+                  exportFormat === 'jpg'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ImageIcon className="w-4 h-4 text-amber-600" />
+                <span>JPG</span>
+              </button>
+              <button
+                type="button"
+                data-testid="modal-format-svg"
                 onClick={() => setExportFormat('svg')}
-                className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer ${
                   exportFormat === 'svg'
                     ? 'bg-white text-blue-700 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <FileCode className="w-4 h-4 text-indigo-600" />
-                <span>Vector SVG</span>
+                <span>SVG</span>
               </button>
             </div>
           </div>
 
           {/* Format-Specific Options */}
-          {exportFormat === 'png' ? (
+          {exportFormat === 'png' || exportFormat === 'jpg' ? (
             <div className="p-3 rounded-xl bg-white border border-slate-200/80 shadow-sm flex flex-col gap-2">
               <div className="flex items-center justify-between text-slate-700">
-                <span className="font-bold text-xs">PNG Resolution</span>
+                <span className="font-bold text-xs">{exportFormat.toUpperCase()} Resolution</span>
                 <span className="text-[11px] font-semibold text-blue-600">
                   {pngResolution === 1 && `${canvasDimensions.width} × ${canvasDimensions.height} px (Standard)`}
                   {pngResolution === 2 && `${canvasDimensions.width * 2} × ${canvasDimensions.height * 2} px (2K Retina • Sharp)`}
@@ -486,7 +511,12 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
               <div>
                 <p className="font-bold text-xs">Artwork Exported Successfully!</p>
                 <p className="text-[11px] text-emerald-700">
-                  {exportFormat === 'png' ? 'High-res PNG' : 'Vector SVG'} file downloaded and saved to your Studio Gallery.
+                  {exportFormat === 'png'
+                    ? 'High-res PNG'
+                    : exportFormat === 'jpg'
+                      ? 'JPEG Image'
+                      : 'Vector SVG'}{' '}
+                  file downloaded and saved to your Studio Gallery.
                 </p>
               </div>
             </div>
@@ -509,9 +539,9 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
           >
             <Download className="w-4 h-4 text-white" />
             <span>
-              {exportFormat === 'png'
-                ? `Download ${canvasDimensions.width * pngResolution}px PNG`
-                : 'Download SVG'}
+              {exportFormat === 'svg'
+                ? 'Download SVG'
+                : `Download ${canvasDimensions.width * pngResolution}px ${exportFormat.toUpperCase()}`}
             </span>
           </button>
 

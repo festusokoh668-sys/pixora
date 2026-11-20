@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   DrawingTemplate,
+  LayerFilterType,
   MirrorMode,
   PaintFinish,
   Point,
@@ -47,8 +48,11 @@ import {
   getPointerPairMetrics,
   calculatePinchZoomAndPan,
   calculateWheelZoomAndPan,
+  calculateFullScreenCanvasDimensions,
 } from '../utils/viewport';
 import { generateOutlineTraceDataUrl, generateFallbackSvgDataUrl } from '../utils/edgeDetection';
+import { generateRulerTicks, clientCoordToRulerCanvasPx } from '../utils/rulers';
+import { applyLayerFilterToContext, getLayerFilterSpec } from '../utils/filters';
 
 export interface CanvasStudioHandle {
   cutSelection: () => void;
@@ -59,6 +63,8 @@ export interface CanvasStudioHandle {
   deleteSelection: () => void;
   cropToSelection: () => void;
   rotateOrFlip: (action: 'cw90' | 'ccw90' | '180' | 'flipH' | 'flipV') => void;
+  applyFilter: (filter: LayerFilterType) => void;
+  exportRaster: (format: 'png' | 'jpg', quality?: number) => string | null;
   getCanPaste: () => boolean;
 }
 
@@ -93,6 +99,8 @@ interface CanvasStudioProps {
   onCanvasStrokeStart?: () => void;
   canvasDimensions: { width: number; height: number };
   onCanvasDimensionsChange: (dims: { width: number; height: number }) => void;
+  isAutoFillScreen?: boolean;
+  onManualCanvasResize?: () => void;
   onCursorPositionChange?: (pos: { x: number; y: number } | null) => void;
   onSelectionSizeChange?: (dims: { width: number; height: number } | null) => void;
   onHasSelectionChange?: (hasSelection: boolean) => void;
@@ -132,6 +140,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       onCanvasStrokeStart,
       canvasDimensions,
       onCanvasDimensionsChange,
+      isAutoFillScreen = true,
+      onManualCanvasResize,
       onCursorPositionChange,
       onSelectionSizeChange,
       onHasSelectionChange,
@@ -181,6 +191,18 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
     // Canvas Edge Handle Resize preview state
     const [resizingPreview, setResizingPreview] = useState<{ width: number; height: number } | null>(null);
+
+    // Interactive Pixel Rulers state (live tracking, scroll alignment & click/drag guides)
+    const [hoverCursor, setHoverCursor] = useState<{ x: number; y: number } | null>(null);
+    const [rulerHoverPreview, setRulerHoverPreview] = useState<{ axis: 'x' | 'y'; px: number } | null>(null);
+    const [scrollOffset, setScrollOffset] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+    const [rulerGuides, setRulerGuides] = useState<{ vertical: number[]; horizontal: number[] }>({
+      vertical: [],
+      horizontal: [],
+    });
+    const topRulerRef = useRef<HTMLDivElement>(null);
+    const leftRulerRef = useRef<HTMLDivElement>(null);
+    const draggingGuideRef = useRef<{ axis: 'vertical' | 'horizontal'; index: number } | null>(null);
 
     // Template Tracing HUD state
     const [showTemplateGuide, setShowTemplateGuide] = useState<boolean>(true);
@@ -268,6 +290,50 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         onSelectionSizeChange?.(null);
       }
     }, [selectionRect, onHasSelectionChange, onSelectionSizeChange]);
+
+    // Keep refs synced for ResizeObserver without tearing down observer on every stroke
+    const canvasDimensionsRef = useRef(canvasDimensions);
+    canvasDimensionsRef.current = canvasDimensions;
+    const strokesCountRef = useRef(strokes.length);
+    strokesCountRef.current = strokes.length;
+    const onCanvasDimensionsChangeRef = useRef(onCanvasDimensionsChange);
+    onCanvasDimensionsChangeRef.current = onCanvasDimensionsChange;
+
+    // Expand canvas automatically to fill the entire workspace screen
+    useEffect(() => {
+      if (!isAutoFillScreen) return;
+      const ws = workspaceRef.current;
+      if (!ws) return;
+
+      const syncToWorkspace = () => {
+        const w = ws.clientWidth;
+        const h = ws.clientHeight;
+        if (w <= 0 || h <= 0) return;
+        const current = canvasDimensionsRef.current;
+        const next = calculateFullScreenCanvasDimensions(
+          w,
+          h,
+          current,
+          strokesCountRef.current > 0
+        );
+        if (next.width !== current.width || next.height !== current.height) {
+          onCanvasDimensionsChangeRef.current(next);
+        }
+      };
+
+      syncToWorkspace();
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(() => {
+          syncToWorkspace();
+        });
+        observer.observe(ws);
+        return () => observer.disconnect();
+      }
+
+      window.addEventListener('resize', syncToWorkspace);
+      return () => window.removeEventListener('resize', syncToWorkspace);
+    }, [isAutoFillScreen]);
 
     // Scroll back to top-left on resetViewSignal
     const prevResetSignalRef = useRef<number | undefined>(resetViewSignal);
@@ -689,6 +755,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
             rect: { x: 0, y: 0, width: nextW, height: nextH },
             rasterDataUrl: dataUrl,
           };
+          onManualCanvasResize?.();
           onCanvasDimensionsChange({ width: nextW, height: nextH });
           onStrokesChange([cropOp]);
           setSelectionRect(null);
@@ -759,6 +826,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
               setSelectionRect(nextRect);
             } else {
               if (swapDims) {
+                onManualCanvasResize?.();
                 onCanvasDimensionsChange({ width: outW, height: outH });
               }
               const replaceWhole: Stroke = {
@@ -777,8 +845,77 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           };
           img.src = srcUrl;
         },
+        applyFilter: (filter) => {
+          if (strokes.length === 0 && (filter !== 'invert' || Boolean(activeTemplate))) {
+            onNotify?.('Draw something on the canvas before applying a filter');
+            return;
+          }
+
+          const width = canvasDimensions.width;
+          const height = canvasDimensions.height;
+
+          let strokesCanvas = strokesCanvasRef.current;
+          if (!strokesCanvas) {
+            strokesCanvas = document.createElement('canvas');
+            strokesCanvas.width = width;
+            strokesCanvas.height = height;
+          }
+
+          const filteredCanvas = document.createElement('canvas');
+          filteredCanvas.width = width;
+          filteredCanvas.height = height;
+          const fctx = filteredCanvas.getContext('2d');
+          if (!fctx) return;
+
+          applyLayerFilterToContext(fctx, strokesCanvas, width, height, filter, {
+            opaquePaperBackground: filter === 'invert' && !activeTemplate,
+          });
+
+          const filteredDataUrl = filteredCanvas.toDataURL('image/png');
+          const spec = getLayerFilterSpec(filter);
+          const filterOp: Stroke = {
+            id: `op_filter_${filter}_${Date.now()}`,
+            tool: 'select',
+            color: '#000000',
+            size: 1,
+            opacity: 1,
+            points: [],
+            operation: 'replace-bitmap',
+            rect: { x: 0, y: 0, width, height },
+            rasterDataUrl: filteredDataUrl,
+          };
+
+          const commitFiltered = () => {
+            onStrokesChange([filterOp]);
+            onNotify?.(`Applied ${spec.label} filter to drawing layer`);
+          };
+
+          const preloaded = preloadStrokeRasterImage(filteredDataUrl, commitFiltered);
+          if (preloaded && preloaded.complete && preloaded.naturalWidth > 0) {
+            commitFiltered();
+          }
+        },
+        exportRaster: (format, quality = 0.92) => {
+          const width = Math.max(1, canvasDimensions.width);
+          const height = Math.max(1, canvasDimensions.height);
+          const out = document.createElement('canvas');
+          out.width = width;
+          out.height = height;
+          const octx = out.getContext('2d');
+          if (!octx) return null;
+
+          // Pure white paper base (essential for opaque JPG and crisp PNG)
+          octx.fillStyle = '#FFFFFF';
+          octx.fillRect(0, 0, width, height);
+          if (strokesCanvasRef.current) {
+            octx.drawImage(strokesCanvasRef.current, 0, 0);
+          }
+
+          return out.toDataURL(format === 'jpg' ? 'image/jpeg' : 'image/png', quality);
+        },
       }),
       [
+        activeTemplate,
         canvasDimensions,
         selectionRect,
         strokes,
@@ -1034,6 +1171,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         window.removeEventListener('pointerup', onUp);
         setResizingPreview(null);
         if (latestW !== startW || latestH !== startH) {
+          onManualCanvasResize?.();
           onCanvasDimensionsChange({ width: latestW, height: latestH });
         }
       };
@@ -1290,6 +1428,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         canvasDimensions.height
       );
       onCursorPositionChange?.({ x: hoverPt.x, y: hoverPt.y });
+      setHoverCursor({ x: hoverPt.x, y: hoverPt.y });
 
       if (isPinchingRef.current || suppressDrawingUntilAllUpRef.current || activePointersRef.current.size > 1) return;
       if (!isDrawingRef.current) return;
@@ -1549,6 +1688,112 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
     const displayW = (resizingPreview?.width ?? canvasDimensions.width) * zoomLevel;
     const displayH = (resizingPreview?.height ?? canvasDimensions.height) * zoomLevel;
 
+    // Interactive Ruler Tick Marks & Handlers
+    const effectiveWidth = resizingPreview?.width ?? canvasDimensions.width;
+    const effectiveHeight = resizingPreview?.height ?? canvasDimensions.height;
+    const xTicks = showRulers ? generateRulerTicks(effectiveWidth, zoomLevel) : [];
+    const yTicks = showRulers ? generateRulerTicks(effectiveHeight, zoomLevel) : [];
+
+    const mapTopRulerX = (clientX: number) => {
+      const el = topRulerRef.current;
+      if (!el) return 0;
+      return clientCoordToRulerCanvasPx(
+        clientX,
+        el.getBoundingClientRect().left,
+        scrollOffset.left,
+        zoomLevel,
+        effectiveWidth,
+        0
+      );
+    };
+
+    const mapLeftRulerY = (clientY: number) => {
+      const el = leftRulerRef.current;
+      if (!el) return 0;
+      return clientCoordToRulerCanvasPx(
+        clientY,
+        el.getBoundingClientRect().top,
+        scrollOffset.top,
+        zoomLevel,
+        effectiveHeight,
+        0
+      );
+    };
+
+    const handleTopRulerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest('[data-ruler-guide-pin="true"]')) return;
+      e.preventDefault();
+      const px = mapTopRulerX(e.clientX);
+      let guideIdx = -1;
+      setRulerGuides((prev) => {
+        const next = [...prev.vertical, px];
+        guideIdx = next.length - 1;
+        return { ...prev, vertical: next };
+      });
+      draggingGuideRef.current = { axis: 'vertical', index: guideIdx };
+      setRulerHoverPreview({ axis: 'x', px });
+
+      const onMove = (ev: PointerEvent) => {
+        const nextPx = mapTopRulerX(ev.clientX);
+        setRulerHoverPreview({ axis: 'x', px: nextPx });
+        if (draggingGuideRef.current?.axis === 'vertical') {
+          const idx = draggingGuideRef.current.index;
+          setRulerGuides((prev) => {
+            if (idx < 0 || idx >= prev.vertical.length) return prev;
+            const copy = [...prev.vertical];
+            copy[idx] = nextPx;
+            return { ...prev, vertical: copy };
+          });
+        }
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        draggingGuideRef.current = null;
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
+    const handleLeftRulerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest('[data-ruler-guide-pin="true"]')) return;
+      e.preventDefault();
+      const px = mapLeftRulerY(e.clientY);
+      let guideIdx = -1;
+      setRulerGuides((prev) => {
+        const next = [...prev.horizontal, px];
+        guideIdx = next.length - 1;
+        return { ...prev, horizontal: next };
+      });
+      draggingGuideRef.current = { axis: 'horizontal', index: guideIdx };
+      setRulerHoverPreview({ axis: 'y', px });
+
+      const onMove = (ev: PointerEvent) => {
+        const nextPx = mapLeftRulerY(ev.clientY);
+        setRulerHoverPreview({ axis: 'y', px: nextPx });
+        if (draggingGuideRef.current?.axis === 'horizontal') {
+          const idx = draggingGuideRef.current.index;
+          setRulerGuides((prev) => {
+            if (idx < 0 || idx >= prev.horizontal.length) return prev;
+            const copy = [...prev.horizontal];
+            copy[idx] = nextPx;
+            return { ...prev, horizontal: copy };
+          });
+        }
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        draggingGuideRef.current = null;
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
     const getCanvasCursor = () => {
       if (tool === 'text') return 'text';
       if (tool === 'picker') return 'crosshair';
@@ -1726,55 +1971,210 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           </div>
         )}
 
-        {/* Top Horizontal Ruler (View -> Rulers) */}
+        {/* Top Horizontal Interactive Pixel Ruler (View -> Rulers / Tools -> Ruler) */}
         {showRulers && (
-          <div className="h-[18px] bg-[#F5F6F7] border-b border-[#C6C7C8] pl-[18px] flex items-end overflow-hidden shrink-0 select-none text-[9px] text-[#555]">
-            <div className="relative h-full" style={{ width: `${displayW}px` }}>
-              {Array.from({ length: Math.ceil(canvasDimensions.width / 100) + 1 }, (_, i) => (
-                <span
-                  key={i}
-                  className="absolute bottom-0 border-l border-[#8E8E8E] pl-0.5 leading-none pb-0.5"
-                  style={{ left: `${i * 100 * zoomLevel}px` }}
-                >
-                  {i * 100}
-                </span>
-              ))}
+          <div className="h-[22px] bg-[#F5F6F7] border-b border-[#C6C7C8] flex items-stretch shrink-0 select-none text-[9px] text-[#333] relative z-20">
+            {/* Top-left Ruler Corner Box (Click to clear guides) */}
+            <button
+              type="button"
+              data-testid="ruler-corner"
+              onClick={() => {
+                if (rulerGuides.vertical.length > 0 || rulerGuides.horizontal.length > 0) {
+                  setRulerGuides({ vertical: [], horizontal: [] });
+                  onNotify?.('Cleared ruler guides');
+                }
+              }}
+              className="w-[22px] h-full bg-[#EFEFEF] border-r border-[#C6C7C8] flex items-center justify-center text-[8px] font-semibold text-[#555] shrink-0 hover:bg-[#E5F1FB] cursor-pointer"
+              title={
+                rulerGuides.vertical.length > 0 || rulerGuides.horizontal.length > 0
+                  ? 'Clear all ruler guides'
+                  : 'Pixel ruler origin (0, 0)'
+              }
+            >
+              {rulerGuides.vertical.length > 0 || rulerGuides.horizontal.length > 0 ? '✕' : 'px'}
+            </button>
+
+            <div
+              ref={topRulerRef}
+              data-testid="ruler-top"
+              onPointerDown={handleTopRulerPointerDown}
+              onPointerMove={(e) => {
+                const px = mapTopRulerX(e.clientX);
+                setRulerHoverPreview({ axis: 'x', px });
+              }}
+              onPointerLeave={() => setRulerHoverPreview(null)}
+              className="flex-1 h-full relative overflow-hidden cursor-col-resize"
+              title="Click or drag along top ruler to place/move a vertical pixel guide"
+            >
+              <div
+                className="relative h-full pointer-events-none"
+                style={{
+                  transform: `translateX(${-scrollOffset.left}px)`,
+                }}
+              >
+                {xTicks.map((tick) => (
+                  <div
+                    key={tick.posPx}
+                    className="absolute bottom-0 border-l border-[#7A7A7A]"
+                    style={{
+                      left: `${tick.displayOffsetPx}px`,
+                      height:
+                        tick.level === 'major' ? '100%' : tick.level === 'mid' ? '10px' : '5px',
+                      borderColor: tick.level === 'major' ? '#666666' : '#9AA4B2',
+                    }}
+                  >
+                    {tick.label !== undefined && (
+                      <span className="pl-0.5 pt-0.5 block leading-none tabular-nums text-[9px] text-[#333]">
+                        {tick.label}
+                      </span>
+                    )}
+                  </div>
+                ))}
+
+                {/* Placed Vertical Guide Markers */}
+                {rulerGuides.vertical.map((gx, idx) => (
+                  <button
+                    key={`vg_${idx}_${gx}`}
+                    type="button"
+                    data-ruler-guide-pin="true"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRulerGuides((prev) => ({
+                        ...prev,
+                        vertical: prev.vertical.filter((_, i) => i !== idx),
+                      }));
+                    }}
+                    className="pointer-events-auto absolute bottom-0 -translate-x-1/2 px-1 bg-[#1979CA] text-white text-[8px] leading-[12px] cursor-pointer hover:bg-[#E81123]"
+                    style={{ left: `${gx * zoomLevel}px` }}
+                    title={`Vertical guide at ${gx}px (Click to remove)`}
+                  >
+                    {gx}
+                  </button>
+                ))}
+
+                {/* Live Cursor X Indicator */}
+                {(hoverCursor || (rulerHoverPreview?.axis === 'x' ? { x: rulerHoverPreview.px } : null)) && (
+                  <div
+                    data-testid="ruler-top-cursor"
+                    className="absolute top-0 bottom-0 w-[1px] bg-[#0078D7]"
+                    style={{
+                      left: `${
+                        (rulerHoverPreview?.axis === 'x'
+                          ? rulerHoverPreview.px
+                          : hoverCursor?.x ?? 0) * zoomLevel
+                      }px`,
+                    }}
+                  />
+                )}
+              </div>
             </div>
           </div>
         )}
 
         <div className="flex-1 min-h-0 flex overflow-hidden">
-          {/* Left Vertical Ruler (View -> Rulers) */}
+          {/* Left Vertical Interactive Pixel Ruler (View -> Rulers / Tools -> Ruler) */}
           {showRulers && (
-            <div className="w-[18px] bg-[#F5F6F7] border-r border-[#C6C7C8] shrink-0 overflow-hidden select-none text-[9px] text-[#555] relative">
-              {Array.from({ length: Math.ceil(canvasDimensions.height / 100) + 1 }, (_, i) => (
-                <span
-                  key={i}
-                  className="absolute left-0 right-0 border-t border-[#8E8E8E] text-center pt-0.5 leading-none"
-                  style={{ top: `${i * 100 * zoomLevel}px` }}
-                >
-                  {i * 100}
-                </span>
-              ))}
+            <div
+              ref={leftRulerRef}
+              data-testid="ruler-left"
+              onPointerDown={handleLeftRulerPointerDown}
+              onPointerMove={(e) => {
+                const px = mapLeftRulerY(e.clientY);
+                setRulerHoverPreview({ axis: 'y', px });
+              }}
+              onPointerLeave={() => setRulerHoverPreview(null)}
+              className="w-[22px] bg-[#F5F6F7] border-r border-[#C6C7C8] shrink-0 overflow-hidden select-none text-[9px] text-[#333] relative cursor-row-resize z-20"
+              title="Click or drag along left ruler to place/move a horizontal pixel guide"
+            >
+              <div
+                className="relative w-full pointer-events-none"
+                style={{
+                  transform: `translateY(${-scrollOffset.top}px)`,
+                }}
+              >
+                {yTicks.map((tick) => (
+                  <div
+                    key={tick.posPx}
+                    className="absolute right-0 border-t border-[#7A7A7A]"
+                    style={{
+                      top: `${tick.displayOffsetPx}px`,
+                      width:
+                        tick.level === 'major' ? '100%' : tick.level === 'mid' ? '10px' : '5px',
+                      borderColor: tick.level === 'major' ? '#666666' : '#9AA4B2',
+                    }}
+                  >
+                    {tick.label !== undefined && (
+                      <span
+                        className="block leading-none tabular-nums text-[8.5px] text-[#333] pl-0.5 pt-0.5"
+                        style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                      >
+                        {tick.label}
+                      </span>
+                    )}
+                  </div>
+                ))}
+
+                {/* Placed Horizontal Guide Markers */}
+                {rulerGuides.horizontal.map((gy, idx) => (
+                  <button
+                    key={`hg_${idx}_${gy}`}
+                    type="button"
+                    data-ruler-guide-pin="true"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRulerGuides((prev) => ({
+                        ...prev,
+                        horizontal: prev.horizontal.filter((_, i) => i !== idx),
+                      }));
+                    }}
+                    className="pointer-events-auto absolute right-0 -translate-y-1/2 px-0.5 bg-[#1979CA] text-white text-[8px] leading-[11px] cursor-pointer hover:bg-[#E81123]"
+                    style={{ top: `${gy * zoomLevel}px` }}
+                    title={`Horizontal guide at ${gy}px (Click to remove)`}
+                  >
+                    {gy}
+                  </button>
+                ))}
+
+                {/* Live Cursor Y Indicator */}
+                {(hoverCursor || (rulerHoverPreview?.axis === 'y' ? { y: rulerHoverPreview.px } : null)) && (
+                  <div
+                    data-testid="ruler-left-cursor"
+                    className="absolute left-0 right-0 h-[1px] bg-[#0078D7]"
+                    style={{
+                      top: `${
+                        (rulerHoverPreview?.axis === 'y'
+                          ? rulerHoverPreview.px
+                          : hoverCursor?.y ?? 0) * zoomLevel
+                      }px`,
+                    }}
+                  />
+                )}
+              </div>
             </div>
           )}
 
-          {/* Scrollable Pale Blue-Grey Windows Paint Workspace with Visible Vertical Scrollbar */}
+          {/* Full-Screen Scrollable Workspace */}
           <div
             ref={workspaceRef}
             data-testid="paint-workspace"
+            onScroll={(e) => {
+              const target = e.currentTarget;
+              setScrollOffset({ left: target.scrollLeft, top: target.scrollTop });
+            }}
             onPointerDownCapture={handleWorkspacePointerDownCapture}
             onPointerMoveCapture={handleWorkspacePointerMoveCapture}
             onPointerUpCapture={handleWorkspacePointerEndCapture}
             onPointerCancel={handleWorkspacePointerEndCapture}
             onContextMenu={(e) => e.preventDefault()}
-            className="flex-1 min-h-0 overflow-y-scroll overflow-x-auto paint-workspace-scroll bg-[#C9D2E3] p-[5px]"
+            className="flex-1 min-h-0 overflow-auto paint-workspace-scroll bg-[#C9D2E3] p-0"
           >
-            <div className="min-h-[calc(100%+1px)] w-fit">
-              {/* Upper-Left Positioned Crisp White Rectangular Drawing Sheet */}
+            <div className="min-h-full w-fit">
+              {/* Crisp White Rectangular Drawing Sheet Expanding Across Full Screen */}
               <div
                 data-testid="canvas-sheet-frame"
-                className="relative bg-white border border-[#9AA4B2] select-none shrink-0"
+                className={`relative bg-white select-none shrink-0 ${
+                  isAutoFillScreen ? '' : 'border border-[#9AA4B2]'
+                }`}
                 style={{
                   width: `${displayW}px`,
                   height: `${displayH}px`,
@@ -1858,7 +2258,10 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerUp}
-                onPointerLeave={() => onCursorPositionChange?.(null)}
+                onPointerLeave={() => {
+                  onCursorPositionChange?.(null);
+                  setHoverCursor(null);
+                }}
                 onDoubleClick={handleDoubleClick}
                 className="drawing-surface block w-full h-full relative z-10"
                 style={{
@@ -1878,6 +2281,26 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                     backgroundSize: `${24 * zoomLevel}px ${24 * zoomLevel}px`,
                   }}
                 />
+              )}
+
+              {/* Interactive Ruler Guide Lines across Canvas */}
+              {showRulers && (rulerGuides.vertical.length > 0 || rulerGuides.horizontal.length > 0) && (
+                <div data-testid="ruler-guides-overlay" className="absolute inset-0 pointer-events-none z-20">
+                  {rulerGuides.vertical.map((gx, idx) => (
+                    <div
+                      key={`vguide_${idx}_${gx}`}
+                      className="absolute inset-y-0 w-0 border-l border-dashed border-[#0078D7]/80"
+                      style={{ left: `${gx * zoomLevel}px` }}
+                    />
+                  ))}
+                  {rulerGuides.horizontal.map((gy, idx) => (
+                    <div
+                      key={`hguide_${idx}_${gy}`}
+                      className="absolute inset-x-0 h-0 border-t border-dashed border-[#0078D7]/80"
+                      style={{ top: `${gy * zoomLevel}px` }}
+                    />
+                  ))}
+                </div>
               )}
 
               {/* Symmetry Center Guide Overlay */}
@@ -1955,23 +2378,23 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 />
               )}
 
-              {/* Classic Windows Paint 3 White/Black Square Resize Handles (Right, Bottom, Corner) */}
+              {/* Classic Windows Paint Resize Handles (Right, Bottom, Corner) */}
               <div
                 onPointerDown={(e) => startSheetResize('right', e)}
                 data-testid="resize-handle-right"
-                className="absolute top-1/2 -right-[5px] -translate-y-1/2 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-ew-resize z-30"
+                className="absolute top-1/2 right-0 -translate-y-1/2 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-ew-resize z-30"
                 title="Drag to resize canvas width"
               />
               <div
                 onPointerDown={(e) => startSheetResize('bottom', e)}
                 data-testid="resize-handle-bottom"
-                className="absolute left-1/2 -bottom-[5px] -translate-x-1/2 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-ns-resize z-30"
+                className="absolute left-1/2 bottom-0 -translate-x-1/2 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-ns-resize z-30"
                 title="Drag to resize canvas height"
               />
               <div
                 onPointerDown={(e) => startSheetResize('corner', e)}
                 data-testid="resize-handle-corner"
-                className="absolute -right-[5px] -bottom-[5px] w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-nwse-resize z-30"
+                className="absolute right-0 bottom-0 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-nwse-resize z-30"
                 title="Drag to resize canvas width & height"
               />
               </div>

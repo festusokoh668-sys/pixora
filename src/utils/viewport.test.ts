@@ -81,3 +81,26 @@ test('calculateWheelZoomAndPan anchors zoom around pointer cursor', () => {
   assert.equal(result.zoomLevel, 1.5);
   assert.deepEqual(result.panOffset, { x: -100, y: -50 });
 });
+
+test('calculateFullScreenCanvasDimensions expands canvas to fill workspace while preserving existing strokes', async () => {
+  const { calculateFullScreenCanvasDimensions } = await import('./viewport');
+
+  // Blank canvas fills full workspace dimensions cleanly
+  assert.deepEqual(calculateFullScreenCanvasDimensions(1280.8, 630.4), {
+    width: 1280,
+    height: 630,
+  });
+
+  // When strokes exist and workspace expands (e.g. ribbon collapsed), canvas expands to fill
+  assert.deepEqual(
+    calculateFullScreenCanvasDimensions(1280, 720, { width: 1280, height: 630 }, true),
+    { width: 1280, height: 720 }
+  );
+
+  // When strokes exist and window shrinks, canvas never clips existing artwork
+  assert.deepEqual(
+    calculateFullScreenCanvasDimensions(900, 500, { width: 1280, height: 630 }, true),
+    { width: 1280, height: 630 }
+  );
+});
+

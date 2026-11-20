@@ -19,17 +19,26 @@ import {
   ZoomOut,
   Check,
   X,
+  FileImage,
+  FileCode,
+  Download,
 } from 'lucide-react';
 import {
   DrawingTemplate,
+  LayerFilterType,
   MirrorMode,
   ShapeFillStyle,
   ShapeOutlineStyle,
   ShapeType,
   ToolType,
 } from '../types';
-import { PAINT_SHAPES } from '../utils/shapes';
+import { PAINT_SHAPES, QUICK_SHAPES } from '../utils/shapes';
 import { toggleMirrorAxis } from '../utils/drawing';
+import {
+  BRUSH_OPTIONS,
+  RecentBrushSetting,
+  recordRecentBrushSetting,
+} from '../utils/recentBrushes';
 
 export interface PaintRibbonProps {
   activeTab: 'file' | 'home' | 'view';
@@ -58,7 +67,9 @@ export interface PaintRibbonProps {
   onOpen: () => void;
   onUploadImage?: (file: File) => void;
   onSave: () => void;
+  onExportFormat?: (format: 'jpg' | 'png' | 'svg') => void;
   onPrint: () => void;
+  onMinimizeWindow?: () => void;
   onExitStudio?: () => void;
   onCut: () => void;
   onCopy: () => void;
@@ -94,6 +105,7 @@ export interface PaintRibbonProps {
   onToggleRibbonPin?: () => void;
   mirrorMode?: MirrorMode;
   onMirrorModeChange?: (mode: MirrorMode) => void;
+  onApplyFilter?: (filter: LayerFilterType) => void;
 }
 
 const WINDOWS_PAINT_PALETTE = [
@@ -101,17 +113,6 @@ const WINDOWS_PAINT_PALETTE = [
   '#000000', '#7F7F7F', '#880015', '#ED1C24', '#FF7F27', '#FFF200', '#22B14C', '#00A2E8', '#3F48CC', '#A349A4',
   // Row 2
   '#FFFFFF', '#C3C3C3', '#B97A57', '#FFAEC9', '#FFC90E', '#EFE4B0', '#B5E61D', '#99D9EA', '#7092BE', '#C8BFE7',
-];
-
-const BRUSH_OPTIONS: Array<{ id: ToolType; label: string; desc: string }> = [
-  { id: 'brush', label: 'Brush', desc: 'Smooth paint brush' },
-  { id: 'calligraphy', label: 'Calligraphy brush 1', desc: 'Sharp nib ink stroke' },
-  { id: 'highlighter', label: 'Marker', desc: 'Semi-transparent marker wash' },
-  { id: 'airbrush', label: 'Airbrush', desc: 'Soft scattered spray' },
-  { id: 'oil', label: 'Oil brush', desc: 'Rich textured oil stroke' },
-  { id: 'crayon', label: 'Crayon', desc: 'Wax grain crayon texture' },
-  { id: 'pencil', label: 'Natural pencil', desc: 'Textured graphite pencil' },
-  { id: 'watercolor', label: 'Watercolor brush', desc: 'Translucent watercolor bleed' },
 ];
 
 const STYLE_OPTIONS: Array<{ id: ShapeOutlineStyle; label: string }> = [
@@ -151,7 +152,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onOpen,
   onUploadImage,
   onSave,
+  onExportFormat,
   onPrint,
+  onMinimizeWindow,
   onExitStudio,
   onCut,
   onCopy,
@@ -186,15 +189,35 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onToggleRibbonPin,
   mirrorMode = 'none',
   onMirrorModeChange,
+  onApplyFilter,
 }) => {
   const [activeDropdown, setActiveDropdown] = useState<
-    null | 'file' | 'select' | 'rotate' | 'brushes' | 'shapes' | 'outline' | 'fill' | 'size'
+    | null
+    | 'file'
+    | 'select'
+    | 'rotate'
+    | 'brushes'
+    | 'shapes'
+    | 'quickShapes'
+    | 'outline'
+    | 'fill'
+    | 'size'
   >(null);
   const [activeColorSlot, setActiveColorSlot] = useState<1 | 2>(1);
   const [shapeRowOffset, setShapeRowOffset] = useState<number>(0);
+  const [recentBrushes, setRecentBrushes] = useState<RecentBrushSetting[]>(() =>
+    recordRecentBrushSetting([], currentTool, currentSize, currentColor)
+  );
 
   const ribbonRef = useRef<HTMLDivElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  // Track last 5 used brush settings (brush type + size + primary color)
+  useEffect(() => {
+    setRecentBrushes((prev) =>
+      recordRecentBrushSetting(prev, currentTool, currentSize, currentColor)
+    );
+  }, [currentTool, currentSize, currentColor]);
 
   // Close open dropdowns when clicking outside Ribbon
   useEffect(() => {
@@ -270,8 +293,15 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
         return <path d="M8 13.5 C8 13.5 2.5 9.5 2.5 6 C2.5 4.1 4 2.8 5.6 2.8 C6.8 2.8 7.6 3.6 8 4.4 C8.4 3.6 9.2 2.8 10.4 2.8 C12 2.8 13.5 4.1 13.5 6 C13.5 9.5 8 13.5 8 13.5 Z" fill={fill} stroke={stroke} strokeWidth="1.1" />;
       case 'callout':
         return <path d="M2.5 4.5 A1.5 1.5 0 0 1 4 3 H12 A1.5 1.5 0 0 1 13.5 4.5 V9.5 A1.5 1.5 0 0 1 12 11 H7 L4.5 13.5 V11 H4 A1.5 1.5 0 0 1 2.5 9.5 Z" fill={fill} stroke={stroke} strokeWidth="1.1" />;
+      case 'cloud':
+        return <path d="M4.2 12.8 C2.1 12.8 2 9.4 4.2 9 C4.4 6.2 7.8 5.2 9.8 7 C11.8 6.4 13.8 8.4 13.2 10.8 C13 12 12 12.8 10.6 12.8 Z" fill={fill} stroke={stroke} strokeWidth="1.1" />;
+      case 'lightning':
+        return <polygon points="9.2,2 3.2,8.8 7.5,8.8 6,14 12.8,6.8 8.3,6.8" fill={fill} stroke={stroke} strokeWidth="1.1" />;
     }
   };
+
+  const isQuickShapeSelected =
+    currentTool === 'shape' && QUICK_SHAPES.some((sh) => sh.id === currentShape);
 
   // Visible 14 shapes inside the 7x2 shapes gallery box (scrolled cleanly via shapeRowOffset)
   const visibleShapes = PAINT_SHAPES.slice(shapeRowOffset * 7, shapeRowOffset * 7 + 14);
@@ -392,9 +422,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
         <div className="flex items-center h-full shrink-0">
           <button
             type="button"
-            onClick={() => onToggleRibbon?.()}
+            data-testid="window-minimize-btn"
+            onClick={() => onMinimizeWindow?.()}
             className="w-[42px] h-full flex items-center justify-center hover:bg-[#E5E5E5] text-[#1E1E1E] cursor-pointer transition-colors"
-            title="Minimize Ribbon"
+            title="Minimize"
             aria-label="Minimize"
           >
             <span className="w-2.5 h-[1px] bg-[#1E1E1E] block" />
@@ -590,6 +621,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
           <div className="my-1 border-t border-[#E0E1E2]" />
           <button
             type="button"
+            data-testid="file-save-as-btn"
             onClick={() => {
               setActiveDropdown(null);
               onSave();
@@ -597,8 +629,63 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
             className="w-full px-3 py-2 flex items-center gap-3 hover:bg-[#E5F1FB] text-left cursor-pointer"
           >
             <Save className="w-4 h-4 text-[#635BA2]" />
-            <span>Save / Save As (PNG or SVG)</span>
+            <span>Save / Save As (JPG, PNG, or SVG)</span>
           </button>
+          {onExportFormat && (
+            <>
+              <div className="my-1 border-t border-[#E0E1E2]" />
+              <div className="px-3 py-1 flex items-center gap-2 text-[11px] font-semibold text-[#555555]">
+                <Download className="w-3.5 h-3.5 text-[#1979CA]" />
+                <span>Export Canvas As</span>
+              </div>
+              <button
+                type="button"
+                data-testid="file-export-jpg-btn"
+                onClick={() => {
+                  setActiveDropdown(null);
+                  onExportFormat('jpg');
+                }}
+                className="w-full pl-6 pr-3 py-1.5 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <FileImage className="w-4 h-4 text-[#D97706]" />
+                  <span>Export as JPG</span>
+                </span>
+                <span className="text-[10px] text-[#666666] font-mono">.jpg</span>
+              </button>
+              <button
+                type="button"
+                data-testid="file-export-png-btn"
+                onClick={() => {
+                  setActiveDropdown(null);
+                  onExportFormat('png');
+                }}
+                className="w-full pl-6 pr-3 py-1.5 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <FileImage className="w-4 h-4 text-[#1979CA]" />
+                  <span>Export as PNG</span>
+                </span>
+                <span className="text-[10px] text-[#666666] font-mono">.png</span>
+              </button>
+              <button
+                type="button"
+                data-testid="file-export-svg-btn"
+                onClick={() => {
+                  setActiveDropdown(null);
+                  onExportFormat('svg');
+                }}
+                className="w-full pl-6 pr-3 py-1.5 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2.5">
+                  <FileCode className="w-4 h-4 text-[#4F46E5]" />
+                  <span>Export as SVG</span>
+                </span>
+                <span className="text-[10px] text-[#666666] font-mono">.svg</span>
+              </button>
+            </>
+          )}
+          <div className="my-1 border-t border-[#E0E1E2]" />
           <button
             type="button"
             onClick={() => {
@@ -780,6 +867,62 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     </button>
                   </div>
                   <span className="text-[11px] text-[#666666] text-center leading-none">Mirror</span>
+                </div>
+              )}
+
+              {/* Filters Group (Grayscale, Sepia, Invert) */}
+              {onApplyFilter && (
+                <div
+                  data-testid="view-filters-group"
+                  className="flex flex-col justify-between h-full px-2.5 border-r border-[#E0E1E2] shrink-0"
+                >
+                  <div className="flex items-center gap-1 pt-0.5">
+                    <button
+                      type="button"
+                      data-testid="ribbon-filter-grayscale-btn"
+                      onClick={() => onApplyFilter('grayscale')}
+                      className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
+                      title="Convert current drawing layer to grayscale"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
+                        <circle cx="10" cy="10" r="7" fill="#D4D7DC" stroke="#45505E" strokeWidth="1.2" />
+                        <path d="M10 3 A7 7 0 0 1 10 17 Z" fill="#636B75" />
+                        <path d="M10 6 A4 4 0 0 0 10 14 Z" fill="#F5F6F7" />
+                      </svg>
+                      <span className="mt-1">Grayscale</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="ribbon-filter-sepia-btn"
+                      onClick={() => onApplyFilter('sepia')}
+                      className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
+                      title="Apply warm sepia tone to current drawing layer"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
+                        <rect x="3" y="4" width="14" height="12" rx="1" fill="#E8D2B0" stroke="#8A6030" strokeWidth="1.2" />
+                        <path d="M4.5 14 L8.5 9.5 L11.5 12.5 L13.5 10.5 L15.5 14 Z" fill="#9E6E3B" />
+                        <circle cx="13.5" cy="7.5" r="1.4" fill="#B88346" />
+                      </svg>
+                      <span className="mt-1">Sepia</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="ribbon-filter-invert-btn"
+                      onClick={() => onApplyFilter('invert')}
+                      className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
+                      title="Invert colors of current drawing layer"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
+                        <circle cx="10" cy="10" r="7" fill="#FFFFFF" stroke="#1E1E1E" strokeWidth="1.2" />
+                        <path d="M10 3 A7 7 0 0 0 10 17 Z" fill="#1E1E1E" />
+                        <circle cx="10" cy="10" r="2.2" fill="#1979CA" />
+                      </svg>
+                      <span className="mt-1">Invert</span>
+                    </button>
+                  </div>
+                  <span className="text-[11px] text-[#666666] text-center leading-none">Filters</span>
                 </div>
               )}
             </div>
@@ -1047,9 +1190,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                 </span>
               </div>
 
-              {/* GROUP 3: TOOLS (Pencil, Fill, Text / Eraser, Color picker, Magnifier) */}
+              {/* GROUP 3: TOOLS (Pencil, Fill, Text, Ruler / Eraser, Color picker, Magnifier) */}
               <div className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0">
-                <div className="grid grid-cols-3 gap-1 pt-1">
+                <div className="grid grid-cols-4 gap-1 pt-1">
                   {/* Pencil */}
                   <button
                     type="button"
@@ -1102,6 +1245,29 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     <span className="font-serif font-bold text-[15px] text-[#1E1E1E] leading-none">
                       A
                     </span>
+                  </button>
+
+                  {/* Ruler (Interactive Pixel Rulers) */}
+                  <button
+                    type="button"
+                    data-testid="tool-ruler-btn"
+                    aria-pressed={showRulers}
+                    onClick={onToggleRulers}
+                    className={`w-[24px] h-[24px] flex items-center justify-center border cursor-pointer ${
+                      showRulers
+                        ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                        : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                    }`}
+                    title="Ruler (Toggle interactive pixel rulers along canvas edges)"
+                    aria-label="Ruler"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
+                      <rect x="2" y="5" width="12" height="6" fill="#F6D57E" stroke="#8C6D1F" strokeWidth="1" />
+                      <line x1="4.5" y1="5" x2="4.5" y2="7.5" stroke="#5A4614" strokeWidth="1" />
+                      <line x1="7" y1="5" x2="7" y2="8.5" stroke="#5A4614" strokeWidth="1" />
+                      <line x1="9.5" y1="5" x2="9.5" y2="7.5" stroke="#5A4614" strokeWidth="1" />
+                      <line x1="12" y1="5" x2="12" y2="8.5" stroke="#5A4614" strokeWidth="1" />
+                    </svg>
                   </button>
 
                   {/* Eraser */}
@@ -1202,25 +1368,89 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                   </button>
 
                   {activeDropdown === 'brushes' && (
-                    <div className="fixed mt-0.5 z-50 w-56 bg-white border border-[#A0A0A0] shadow-md p-1.5 grid grid-cols-2 gap-1 text-[11px]">
-                      {BRUSH_OPTIONS.map((b) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => {
-                            onToolSelect(b.id);
-                            setActiveDropdown(null);
-                          }}
-                          className={`px-2 py-1.5 text-left border cursor-pointer ${
-                            currentTool === b.id
-                              ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
-                              : 'border-transparent hover:bg-[#E5F1FB]'
-                          }`}
-                          title={b.desc}
-                        >
-                          {b.label}
-                        </button>
-                      ))}
+                    <div
+                      data-testid="brushes-dropdown"
+                      className="fixed mt-0.5 z-50 w-64 bg-white border border-[#A0A0A0] shadow-md text-[11px]"
+                    >
+                      {/* Recent Group: Last 5 Used Brush Settings */}
+                      <div data-testid="brushes-recent-group">
+                        <div className="bg-[#F5F6F7] border-b border-[#E0E1E2] px-2 py-1 text-[10px] font-semibold text-[#555555] flex items-center justify-between">
+                          <span>Recent</span>
+                          <span className="text-[9px] text-[#777777] font-normal">
+                            Last {recentBrushes.length}/5
+                          </span>
+                        </div>
+                        <div className="p-1 flex flex-col gap-0.5">
+                          {recentBrushes.length === 0 ? (
+                            <div className="px-2 py-1 text-[10px] text-[#777777]">
+                              No recent brushes yet
+                            </div>
+                          ) : (
+                            recentBrushes.map((item, idx) => {
+                              const isActivePreset =
+                                currentTool === item.tool &&
+                                Math.round(currentSize) === item.size &&
+                                currentColor.trim().toUpperCase() === item.color;
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  data-testid={`recent-brush-item-${idx}`}
+                                  onClick={() => {
+                                    onToolSelect(item.tool);
+                                    onSizeChange(item.size);
+                                    onColorChange(item.color);
+                                    setActiveDropdown(null);
+                                  }}
+                                  aria-label={`Recent ${item.label}, ${item.size}px, color ${item.color}`}
+                                  title={`${item.label} • ${item.size}px • ${item.color}`}
+                                  className={`w-full px-2 py-1 flex items-center justify-between gap-2 text-left border cursor-pointer ${
+                                    isActivePreset
+                                      ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                                      : 'border-transparent hover:bg-[#E5F1FB]'
+                                  }`}
+                                >
+                                  <span className="flex items-center gap-2 min-w-0">
+                                    <span
+                                      className="w-3 h-3 border border-[#808080] shrink-0"
+                                      style={{ backgroundColor: item.color }}
+                                    />
+                                    <span className="truncate text-[#1E1E1E]">{item.label}</span>
+                                  </span>
+                                  <span className="text-[10px] text-[#555555] font-mono shrink-0">
+                                    {item.size}px
+                                  </span>
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+
+                      {/* All Brushes Group */}
+                      <div className="bg-[#F5F6F7] border-y border-[#E0E1E2] px-2 py-1 text-[10px] font-semibold text-[#555555]">
+                        Brushes
+                      </div>
+                      <div className="p-1.5 grid grid-cols-2 gap-1">
+                        {BRUSH_OPTIONS.map((b) => (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => {
+                              onToolSelect(b.id);
+                              setActiveDropdown(null);
+                            }}
+                            className={`px-2 py-1.5 text-left border cursor-pointer ${
+                              currentTool === b.id
+                                ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                                : 'border-transparent hover:bg-[#E5F1FB]'
+                            }`}
+                            title={b.desc}
+                          >
+                            {b.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1392,6 +1622,97 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  {/* Quick Shapes Popup Button */}
+                  <div className="relative pl-1 border-l border-[#E0E1E2]">
+                    <button
+                      type="button"
+                      data-testid="ribbon-quick-shapes-btn"
+                      aria-expanded={activeDropdown === 'quickShapes'}
+                      aria-haspopup="menu"
+                      onClick={() =>
+                        setActiveDropdown(activeDropdown === 'quickShapes' ? null : 'quickShapes')
+                      }
+                      className={`flex flex-col items-center px-1.5 py-0.5 border cursor-pointer min-w-[46px] ${
+                        activeDropdown === 'quickShapes' || isQuickShapeSelected
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                          : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                      }`}
+                      title="Quick Shapes (Hearts, stars & speech bubbles)"
+                    >
+                      <svg className="w-6 h-6 mt-0.5" viewBox="0 0 24 24" fill="none">
+                        {/* Heart */}
+                        <path
+                          d="M7.2 11.5 C7.2 11.5 2.8 8.5 2.8 5.7 C2.8 4.2 4 3.1 5.3 3.1 C6.2 3.1 6.9 3.7 7.2 4.4 C7.5 3.7 8.2 3.1 9.1 3.1 C10.4 3.1 11.6 4.2 11.6 5.7 C11.6 8.5 7.2 11.5 7.2 11.5 Z"
+                          fill="#F9C6D1"
+                          stroke="#B83354"
+                          strokeWidth="1.1"
+                        />
+                        {/* 5-Point Star */}
+                        <polygon
+                          points="17.5,2.5 18.7,5.4 21.8,5.6 19.4,7.6 20.2,10.7 17.5,9 14.8,10.7 15.6,7.6 13.2,5.6 16.3,5.4"
+                          fill="#FFE588"
+                          stroke="#9E7312"
+                          strokeWidth="1"
+                        />
+                        {/* Speech Bubble */}
+                        <path
+                          d="M7 14.5 A1.5 1.5 0 0 1 8.5 13 H18.5 A1.5 1.5 0 0 1 20 14.5 V19 A1.5 1.5 0 0 1 18.5 20.5 H12.5 L9.8 22.8 V20.5 H8.5 A1.5 1.5 0 0 1 7 19 Z"
+                          fill="#DDE9F9"
+                          stroke="#2D5A9E"
+                          strokeWidth="1.1"
+                        />
+                      </svg>
+                      <span className="text-[10.5px] leading-[1.05] mt-0.5 text-center">
+                        Quick<br />Shapes <span className="text-[8px]">▾</span>
+                      </span>
+                    </button>
+
+                    {activeDropdown === 'quickShapes' && (
+                      <div
+                        data-testid="quick-shapes-popup"
+                        role="menu"
+                        aria-label="Quick Shapes"
+                        className="fixed mt-0.5 z-50 w-[264px] bg-white border border-[#A0A0A0] shadow-md p-1.5"
+                      >
+                        <div className="text-[11px] font-semibold text-[#333] px-1 pb-1 mb-1 border-b border-[#E0E1E2] flex items-center justify-between">
+                          <span>Quick Shapes</span>
+                          <span className="text-[10px] font-normal text-[#666]">Custom</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1">
+                          {QUICK_SHAPES.map((sh) => {
+                            const selected = currentTool === 'shape' && currentShape === sh.id;
+                            return (
+                              <button
+                                key={sh.id}
+                                type="button"
+                                role="menuitem"
+                                data-testid={`quick-shape-${sh.id}-btn`}
+                                onClick={() => {
+                                  onShapeSelect(sh.id);
+                                  onToolSelect('shape');
+                                  setActiveDropdown(null);
+                                }}
+                                className={`flex flex-col items-center justify-center px-1 py-1.5 border cursor-pointer ${
+                                  selected
+                                    ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                                    : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                                }`}
+                                title={sh.label}
+                              >
+                                <svg className="w-5 h-5" viewBox="0 0 16 16">
+                                  {renderShapeMiniIcon(sh.id)}
+                                </svg>
+                                <span className="text-[10px] leading-tight mt-0.5 text-[#1E1E1E] text-center truncate w-full">
+                                  {sh.label}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <span className="text-[11px] text-[#666666] text-center leading-none pb-0.5">

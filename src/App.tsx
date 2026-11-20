@@ -25,7 +25,13 @@ import {
   Stroke,
   ToolType,
 } from './types';
-import { HistoryManager, preloadStrokeRasterImage, renderStrokeToContext } from './utils/drawing';
+import {
+  HistoryManager,
+  preloadStrokeRasterImage,
+  renderStrokeToContext,
+  generateArtworkFilename,
+  exportStrokesToSvgString,
+} from './utils/drawing';
 import { TEMPLATES } from './data/templates';
 
 export default function App() {
@@ -36,6 +42,7 @@ export default function App() {
   const [ribbonTab, setRibbonTab] = useState<'file' | 'home' | 'view'>('home');
   const [isRibbonOpen, setIsRibbonOpen] = useState<boolean>(true);
   const [isRibbonPinned, setIsRibbonPinned] = useState<boolean>(true);
+  const [isWindowMinimized, setIsWindowMinimized] = useState<boolean>(false);
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none');
   const [tool, setTool] = useState<ToolType>('brush');
   const [lastDrawingTool, setLastDrawingTool] = useState<ToolType>('brush');
@@ -60,6 +67,7 @@ export default function App() {
     width: 819,
     height: 460,
   });
+  const [isAutoFullScreenCanvas, setIsAutoFullScreenCanvas] = useState<boolean>(true);
 
   // Live telemetry for Paint Status Bar
   const [cursorPosition, setCursorPosition] = useState<{ x: number; y: number } | null>(null);
@@ -168,6 +176,7 @@ export default function App() {
   const handleConfirmClear = () => {
     historyRef.current.pushState(strokes);
     setStrokes([]);
+    setIsAutoFullScreenCanvas(true);
     updateHistoryFlags();
     showToast('New blank canvas ready');
   };
@@ -290,6 +299,7 @@ export default function App() {
         }
       }
     }
+    setIsAutoFullScreenCanvas(false);
     setCanvasDimensions({ width: newWidth, height: newHeight });
     showToast(`Canvas resized to ${newWidth} × ${newHeight}px`);
   };
@@ -361,6 +371,60 @@ export default function App() {
     showToast(`Saved "${artwork.title}"!`);
   };
 
+  const handleExportFormat = (format: 'jpg' | 'png' | 'svg') => {
+    const baseTitle = activeTemplate ? `Pixora ${activeTemplate.name}` : 'Untitled';
+    const filename = generateArtworkFilename(baseTitle, format);
+
+    if (format === 'svg') {
+      const svgString = exportStrokesToSvgString(strokes, {
+        width: canvasDimensions.width,
+        height: canvasDimensions.height,
+        title: baseTitle,
+        includeWatermark: false,
+      });
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = url;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast(`Exported canvas as SVG`);
+      return;
+    }
+
+    let dataUrl = canvasStudioRef.current?.exportRaster(format, 0.92) ?? null;
+    if (!dataUrl) {
+      const fallbackCanvas = document.createElement('canvas');
+      fallbackCanvas.width = Math.max(1, canvasDimensions.width);
+      fallbackCanvas.height = Math.max(1, canvasDimensions.height);
+      const fctx = fallbackCanvas.getContext('2d');
+      if (fctx) {
+        fctx.fillStyle = '#FFFFFF';
+        fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
+        for (const s of strokes) {
+          renderStrokeToContext(fctx, s, 'export');
+        }
+        dataUrl = fallbackCanvas.toDataURL(
+          format === 'jpg' ? 'image/jpeg' : 'image/png',
+          0.92
+        );
+      }
+    }
+
+    if (dataUrl) {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(`Exported canvas as ${format.toUpperCase()}`);
+    }
+  };
+
   const handleDeleteFromGallery = (id: string) => {
     setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
     showToast('Artwork removed from session');
@@ -390,43 +454,135 @@ export default function App() {
       {currentView === 'welcome' ? (
         <WelcomeScreen onStartCreating={handleStartFreshCanvas} />
       ) : (
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {/* Traditional Windows Paint Title Bar, Tabs & Ribbon */}
-          <PaintRibbon
-            activeTab={ribbonTab}
-            onTabChange={setRibbonTab}
-            currentTool={tool}
-            onToolSelect={handleToolSelect}
-            currentShape={shapeType}
-            onShapeSelect={setShapeType}
-            outlineStyle={outlineStyle}
-            onOutlineStyleChange={setOutlineStyle}
-            fillStyle={fillStyle}
-            onFillStyleChange={setFillStyle}
-            currentColor={color}
-            onColorChange={setColor}
-            secondaryColor={secondaryColor}
-            onSecondaryColorChange={setSecondaryColor}
-            customColors={customColors}
-            onEditColors={() => setIsColorsModalOpen(true)}
-            currentSize={size}
-            onSizeChange={setSize}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
-            onNew={() => {
-              if (strokes.length > 0) {
-                setIsClearConfirmOpen(true);
-              } else {
-                handleConfirmClear();
-              }
-            }}
-            onOpen={() => setIsTemplateModalOpen(true)}
-            onUploadImage={handleUploadImage}
-            onSave={() => setIsSaveModalOpen(true)}
-            onPrint={() => window.print()}
-            onExitStudio={() => setCurrentView('welcome')}
+        <>
+          {isWindowMinimized && (
+            <div
+              data-testid="minimized-desktop-view"
+              className="flex-1 min-h-0 flex flex-col justify-between bg-gradient-to-br from-[#1C4D82] via-[#1B5EA4] to-[#0E325C] text-white select-none"
+            >
+              <div className="flex-1 flex items-center justify-center p-6">
+                <div className="bg-[#F5F6F7] text-[#1E1E1E] border border-[#A0A0A0] shadow-xl px-5 py-4 flex items-center gap-4 max-w-md w-full">
+                  <svg className="w-9 h-9 shrink-0" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M12 3C6.5 3 2 7 2 11.8C2 15.2 4.8 17.5 8 17.5C9.4 17.5 10.2 18.2 10.2 19.3C10.2 20.5 11.1 21 12.5 21C18 21 22 17 22 12C22 7 17.5 3 12 3Z"
+                      fill="#F6D57E"
+                      stroke="#8B6F29"
+                      strokeWidth="1.4"
+                    />
+                    <circle cx="7.5" cy="9.5" r="1.6" fill="#ED1C24" />
+                    <circle cx="12" cy="7.2" r="1.6" fill="#22B14C" />
+                    <circle cx="16.5" cy="9.5" r="1.6" fill="#00A2E8" />
+                    <circle cx="16.5" cy="14" r="1.6" fill="#FFF200" />
+                  </svg>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold truncate">
+                      {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
+                    </div>
+                    <div className="text-[11px] text-[#555555]">
+                      Window minimized ({strokes.length} stroke{strokes.length === 1 ? '' : 's'} preserved)
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="desktop-restore-btn"
+                    onClick={() => setIsWindowMinimized(false)}
+                    className="px-3 py-1.5 bg-[#1979CA] hover:bg-[#1464A8] text-white text-[12px] font-medium cursor-pointer shrink-0"
+                  >
+                    Restore
+                  </button>
+                </div>
+              </div>
+
+              {/* Traditional Windows Taskbar */}
+              <div
+                data-testid="windows-taskbar"
+                className="h-[40px] bg-[#1F242D] border-t border-[#343C4A] px-2 flex items-center justify-between text-[12px]"
+              >
+                <div className="flex items-center gap-1 h-full">
+                  <div className="w-9 h-full flex items-center justify-center text-[#93C5FD]">
+                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                      <rect x="1" y="1" width="6" height="6" />
+                      <rect x="9" y="1" width="6" height="6" />
+                      <rect x="1" y="9" width="6" height="6" />
+                      <rect x="9" y="9" width="6" height="6" />
+                    </svg>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="taskbar-restore-btn"
+                    onClick={() => setIsWindowMinimized(false)}
+                    className="h-full px-3 bg-[#2E3644] hover:bg-[#3A4556] border-b-2 border-[#60A5FA] flex items-center gap-2 text-white cursor-pointer"
+                    title="Click to restore Pixora window"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M12 3C6.5 3 2 7 2 11.8C2 15.2 4.8 17.5 8 17.5C9.4 17.5 10.2 18.2 10.2 19.3C10.2 20.5 11.1 21 12.5 21C18 21 22 17 22 12C22 7 17.5 3 12 3Z"
+                        fill="#F6D57E"
+                        stroke="#8B6F29"
+                        strokeWidth="1.4"
+                      />
+                      <circle cx="7.5" cy="9.5" r="1.6" fill="#ED1C24" />
+                      <circle cx="12" cy="7.2" r="1.6" fill="#22B14C" />
+                      <circle cx="16.5" cy="9.5" r="1.6" fill="#00A2E8" />
+                    </svg>
+                    <span className="truncate max-w-[200px]">
+                      {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
+                    </span>
+                  </button>
+                </div>
+                <div className="text-[11px] text-[#CBD5E1] px-2">
+                  Click taskbar item to restore
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div
+            data-testid="paint-studio-window"
+            className={
+              isWindowMinimized
+                ? 'hidden'
+                : 'flex-1 min-h-0 flex flex-col overflow-hidden'
+            }
+          >
+            {/* Traditional Windows Paint Title Bar, Tabs & Ribbon */}
+            <PaintRibbon
+              activeTab={ribbonTab}
+              onTabChange={setRibbonTab}
+              currentTool={tool}
+              onToolSelect={handleToolSelect}
+              currentShape={shapeType}
+              onShapeSelect={setShapeType}
+              outlineStyle={outlineStyle}
+              onOutlineStyleChange={setOutlineStyle}
+              fillStyle={fillStyle}
+              onFillStyleChange={setFillStyle}
+              currentColor={color}
+              onColorChange={setColor}
+              secondaryColor={secondaryColor}
+              onSecondaryColorChange={setSecondaryColor}
+              customColors={customColors}
+              onEditColors={() => setIsColorsModalOpen(true)}
+              currentSize={size}
+              onSizeChange={setSize}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              onNew={() => {
+                if (strokes.length > 0) {
+                  setIsClearConfirmOpen(true);
+                } else {
+                  handleConfirmClear();
+                }
+              }}
+              onOpen={() => setIsTemplateModalOpen(true)}
+              onUploadImage={handleUploadImage}
+              onSave={() => setIsSaveModalOpen(true)}
+              onExportFormat={handleExportFormat}
+              onPrint={() => window.print()}
+              onMinimizeWindow={() => setIsWindowMinimized(true)}
+              onExitStudio={() => setCurrentView('welcome')}
             onCut={() => canvasStudioRef.current?.cutSelection()}
             onCopy={() => canvasStudioRef.current?.copySelection()}
             onPaste={() => canvasStudioRef.current?.pasteClipboard()}
@@ -472,6 +628,7 @@ export default function App() {
             }}
             mirrorMode={mirrorMode}
             onMirrorModeChange={setMirrorMode}
+            onApplyFilter={(filter) => canvasStudioRef.current?.applyFilter(filter)}
           />
 
           {/* Main Pale Blue-Grey Workspace & Upper-Left White Canvas */}
@@ -510,6 +667,8 @@ export default function App() {
               }}
               canvasDimensions={canvasDimensions}
               onCanvasDimensionsChange={setCanvasDimensions}
+              isAutoFillScreen={isAutoFullScreenCanvas}
+              onManualCanvasResize={() => setIsAutoFullScreenCanvas(false)}
               onCursorPositionChange={setCursorPosition}
               onSelectionSizeChange={setSelectionSize}
               onHasSelectionChange={setHasSelection}
@@ -597,14 +756,15 @@ export default function App() {
             }}
           />
 
-          {/* Clear Canvas Confirmation */}
-          <ClearConfirmModal
-            isOpen={isClearConfirmOpen}
-            onClose={() => setIsClearConfirmOpen(false)}
-            onConfirmClear={handleConfirmClear}
-            strokesCount={strokes.length}
-          />
-        </div>
+            {/* Clear Canvas Confirmation */}
+            <ClearConfirmModal
+              isOpen={isClearConfirmOpen}
+              onClose={() => setIsClearConfirmOpen(false)}
+              onConfirmClear={handleConfirmClear}
+              strokesCount={strokes.length}
+            />
+          </div>
+        </>
       )}
     </div>
   );

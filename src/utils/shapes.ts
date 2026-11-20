@@ -26,6 +26,20 @@ export const PAINT_SHAPES: ShapeDefinition[] = [
   { id: 'star-6', label: 'Six-point star' },
   { id: 'heart', label: 'Heart' },
   { id: 'callout', label: 'Rounded rectangular callout' },
+  { id: 'cloud', label: 'Cloud' },
+  { id: 'lightning', label: 'Lightning bolt' },
+];
+
+export const QUICK_SHAPES: ShapeDefinition[] = [
+  { id: 'heart', label: 'Heart' },
+  { id: 'star-5', label: '5-Point Star' },
+  { id: 'callout', label: 'Speech Bubble' },
+  { id: 'star-4', label: '4-Point Star' },
+  { id: 'star-6', label: '6-Point Star' },
+  { id: 'cloud', label: 'Cloud' },
+  { id: 'lightning', label: 'Lightning' },
+  { id: 'diamond', label: 'Diamond' },
+  { id: 'arrow-right', label: 'Right Arrow' },
 ];
 
 /**
@@ -114,6 +128,15 @@ export function getShapeVertices(
         { x: maxX, y: minY + h * 0.55 },
         { x: minX + w * 0.72, y: minY + h * 0.55 },
         { x: minX + w * 0.72, y: minY },
+      ];
+    case 'lightning':
+      return [
+        { x: minX + w * 0.58, y: minY },
+        { x: minX + w * 0.16, y: minY + h * 0.54 },
+        { x: minX + w * 0.48, y: minY + h * 0.54 },
+        { x: minX + w * 0.36, y: maxY },
+        { x: minX + w * 0.84, y: minY + h * 0.42 },
+        { x: minX + w * 0.52, y: minY + h * 0.42 },
       ];
     default:
       return [];
@@ -273,6 +296,44 @@ export function traceShapePath(
     return { isClosed: true };
   }
 
+  if (shapeType === 'cloud') {
+    ctx.moveTo(minX + w * 0.25, minY + h * 0.85);
+    ctx.bezierCurveTo(
+      minX + w * 0.04,
+      minY + h * 0.85,
+      minX + w * 0.04,
+      minY + h * 0.48,
+      minX + w * 0.24,
+      minY + h * 0.46
+    );
+    ctx.bezierCurveTo(
+      minX + w * 0.24,
+      minY + h * 0.16,
+      minX + w * 0.58,
+      minY + h * 0.12,
+      minX + w * 0.66,
+      minY + h * 0.36
+    );
+    ctx.bezierCurveTo(
+      minX + w * 0.88,
+      minY + h * 0.32,
+      minX + w * 0.96,
+      minY + h * 0.62,
+      minX + w * 0.82,
+      minY + h * 0.78
+    );
+    ctx.bezierCurveTo(
+      minX + w * 0.8,
+      minY + h * 0.85,
+      minX + w * 0.7,
+      minY + h * 0.85,
+      minX + w * 0.25,
+      minY + h * 0.85
+    );
+    ctx.closePath();
+    return { isClosed: true };
+  }
+
   const verts = getShapeVertices(shapeType, p0, pLast);
   if (verts.length > 0) {
     ctx.moveTo(verts[0].x, verts[0].y);
@@ -355,3 +416,116 @@ export function renderShapeToContext(
 
   ctx.restore();
 }
+
+function r(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Generates an SVG path `d` attribute string matching traceShapePath geometry.
+ */
+export function shapeToSvgPathData(
+  shapeType: ShapeType,
+  points: Point[]
+): { d: string; isClosed: boolean } {
+  if (points.length === 0) return { d: '', isClosed: false };
+  const p0 = points[0];
+  const pLast = points[points.length - 1];
+
+  const minX = Math.min(p0.x, pLast.x);
+  const minY = Math.min(p0.y, pLast.y);
+  const maxX = Math.max(p0.x, pLast.x);
+  const maxY = Math.max(p0.y, pLast.y);
+  const w = maxX - minX;
+  const h = maxY - minY;
+  const cx = minX + w / 2;
+  const cy = minY + h / 2;
+
+  if (shapeType === 'line') {
+    return { d: `M ${r(p0.x)} ${r(p0.y)} L ${r(pLast.x)} ${r(pLast.y)}`, isClosed: false };
+  }
+
+  if (shapeType === 'curve') {
+    if (points.length >= 3) {
+      const pEnd = points[1];
+      const ctrl1 = points[2];
+      const ctrl2 = points[3] ?? ctrl1;
+      return {
+        d: `M ${r(p0.x)} ${r(p0.y)} C ${r(ctrl1.x)} ${r(ctrl1.y)} ${r(ctrl2.x)} ${r(ctrl2.y)} ${r(pEnd.x)} ${r(pEnd.y)}`,
+        isClosed: false,
+      };
+    }
+    return { d: `M ${r(p0.x)} ${r(p0.y)} L ${r(pLast.x)} ${r(pLast.y)}`, isClosed: false };
+  }
+
+  if (shapeType === 'polygon') {
+    const segs = [`M ${r(p0.x)} ${r(p0.y)}`];
+    for (let i = 1; i < points.length; i++) {
+      segs.push(`L ${r(points[i].x)} ${r(points[i].y)}`);
+    }
+    if (points.length >= 3) {
+      segs.push('Z');
+      return { d: segs.join(' '), isClosed: true };
+    }
+    return { d: segs.join(' '), isClosed: false };
+  }
+
+  if (shapeType === 'rectangle') {
+    return {
+      d: `M ${r(minX)} ${r(minY)} H ${r(maxX)} V ${r(maxY)} H ${r(minX)} Z`,
+      isClosed: true,
+    };
+  }
+
+  if (shapeType === 'rounded-rectangle') {
+    const rad = Math.min(18, Math.min(w, h) * 0.22);
+    return {
+      d: `M ${r(minX + rad)} ${r(minY)} L ${r(maxX - rad)} ${r(minY)} Q ${r(maxX)} ${r(minY)} ${r(maxX)} ${r(minY + rad)} L ${r(maxX)} ${r(maxY - rad)} Q ${r(maxX)} ${r(maxY)} ${r(maxX - rad)} ${r(maxY)} L ${r(minX + rad)} ${r(maxY)} Q ${r(minX)} ${r(maxY)} ${r(minX)} ${r(maxY - rad)} L ${r(minX)} ${r(minY + rad)} Q ${r(minX)} ${r(minY)} ${r(minX + rad)} ${r(minY)} Z`,
+      isClosed: true,
+    };
+  }
+
+  if (shapeType === 'oval') {
+    const rx = Math.max(0.5, w / 2);
+    const ry = Math.max(0.5, h / 2);
+    return {
+      d: `M ${r(cx - rx)} ${r(cy)} A ${r(rx)} ${r(ry)} 0 1 0 ${r(cx + rx)} ${r(cy)} A ${r(rx)} ${r(ry)} 0 1 0 ${r(cx - rx)} ${r(cy)} Z`,
+      isClosed: true,
+    };
+  }
+
+  if (shapeType === 'heart') {
+    const topY = minY + h * 0.3;
+    return {
+      d: `M ${r(cx)} ${r(maxY)} C ${r(minX - w * 0.05)} ${r(minY + h * 0.65)} ${r(minX)} ${r(minY)} ${r(cx)} ${r(topY)} C ${r(maxX)} ${r(minY)} ${r(maxX + w * 0.05)} ${r(minY + h * 0.65)} ${r(cx)} ${r(maxY)} Z`,
+      isClosed: true,
+    };
+  }
+
+  if (shapeType === 'callout') {
+    const boxBottom = minY + h * 0.78;
+    const boxH = boxBottom - minY;
+    const rad = Math.min(12, Math.min(w, boxH) * 0.2);
+    return {
+      d: `M ${r(minX + rad)} ${r(minY)} L ${r(maxX - rad)} ${r(minY)} Q ${r(maxX)} ${r(minY)} ${r(maxX)} ${r(minY + rad)} L ${r(maxX)} ${r(boxBottom - rad)} Q ${r(maxX)} ${r(boxBottom)} ${r(maxX - rad)} ${r(boxBottom)} L ${r(minX + w * 0.42)} ${r(boxBottom)} L ${r(minX + w * 0.2)} ${r(maxY)} L ${r(minX + w * 0.28)} ${r(boxBottom)} L ${r(minX + rad)} ${r(boxBottom)} Q ${r(minX)} ${r(boxBottom)} ${r(minX)} ${r(boxBottom - rad)} L ${r(minX)} ${r(minY + rad)} Q ${r(minX)} ${r(minY)} ${r(minX + rad)} ${r(minY)} Z`,
+      isClosed: true,
+    };
+  }
+
+  if (shapeType === 'cloud') {
+    return {
+      d: `M ${r(minX + w * 0.25)} ${r(minY + h * 0.85)} C ${r(minX + w * 0.04)} ${r(minY + h * 0.85)} ${r(minX + w * 0.04)} ${r(minY + h * 0.48)} ${r(minX + w * 0.24)} ${r(minY + h * 0.46)} C ${r(minX + w * 0.24)} ${r(minY + h * 0.16)} ${r(minX + w * 0.58)} ${r(minY + h * 0.12)} ${r(minX + w * 0.66)} ${r(minY + h * 0.36)} C ${r(minX + w * 0.88)} ${r(minY + h * 0.32)} ${r(minX + w * 0.96)} ${r(minY + h * 0.62)} ${r(minX + w * 0.82)} ${r(minY + h * 0.78)} C ${r(minX + w * 0.8)} ${r(minY + h * 0.85)} ${r(minX + w * 0.7)} ${r(minY + h * 0.85)} ${r(minX + w * 0.25)} ${r(minY + h * 0.85)} Z`,
+      isClosed: true,
+    };
+  }
+
+  const verts = getShapeVertices(shapeType, p0, pLast);
+  if (verts.length > 0) {
+    const segs = verts.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${r(pt.x)} ${r(pt.y)}`);
+    segs.push('Z');
+    return { d: segs.join(' '), isClosed: true };
+  }
+
+  return { d: '', isClosed: false };
+}
+

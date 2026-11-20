@@ -1,7 +1,7 @@
 import { Point, Stroke, ToolType, PaintFinish, MirrorMode } from '../types';
 import { floodFill } from './floodFill';
 import { hexToHsl, hslToHex } from './color';
-import { renderShapeToContext } from './shapes';
+import { renderShapeToContext, shapeToSvgPathData } from './shapes';
 
 export interface PaintColorPalette {
   baseColor: string;
@@ -848,15 +848,27 @@ export class HistoryManager {
 }
 
 /**
- * Generates clean filename for exported PNG or SVG
+ * Generates clean filename for exported JPG, PNG, or SVG
  */
-export function generateArtworkFilename(title: string, extension: 'png' | 'svg' = 'png'): string {
+export function generateArtworkFilename(
+  title: string,
+  extension: 'png' | 'jpg' | 'svg' = 'png'
+): string {
   const cleanTitle = (title.trim() || 'Untitled Artwork')
     .replace(/[^a-zA-Z0-9_-]/g, '_')
     .replace(/_+/g, '_')
     .slice(0, 30);
   const dateStr = new Date().toISOString().slice(0, 10);
   return `Pixora_${cleanTitle}_${dateStr}.${extension}`;
+}
+
+function escapeXmlText(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 /**
@@ -895,7 +907,7 @@ export function exportStrokesToSvgString(
 ): string {
   const width = options?.width || 1200;
   const height = options?.height || 1200;
-  const title = options?.title || 'PIXORA Artwork';
+  const title = escapeXmlText(options?.title || 'PIXORA Artwork');
   const includeWatermark = options?.includeWatermark ?? true;
 
   let elements = '';
@@ -918,9 +930,65 @@ export function exportStrokesToSvgString(
 
   for (let i = 0; i < strokes.length; i++) {
     const stroke = strokes[i];
+
+    // Rectangular cut/erase patches
+    if (stroke.operation === 'erase-rect' && stroke.rect) {
+      const { x, y, width: rw, height: rh } = stroke.rect;
+      elements += `  <rect x="${x}" y="${y}" width="${rw}" height="${rh}" fill="${stroke.fillColor || '#FFFFFF'}" />\n`;
+      continue;
+    }
+
+    // Embedded raster layers (clipboard paste, rotate, crop, layer filters)
+    if (
+      (stroke.operation === 'paste-image' || stroke.operation === 'replace-bitmap') &&
+      stroke.rect &&
+      stroke.rasterDataUrl
+    ) {
+      const { x, y, width: rw, height: rh } = stroke.rect;
+      const op = stroke.opacity ?? 1;
+      elements += `  <image href="${stroke.rasterDataUrl}" x="${x}" y="${y}" width="${rw}" height="${rh}" preserveAspectRatio="none" opacity="${op}" />\n`;
+      continue;
+    }
+
     if (stroke.points.length === 0) continue;
 
-    // Determine stroke width and opacity based on tool
+    // Text annotations
+    if (stroke.tool === 'text' && stroke.text) {
+      const pt = stroke.points[0];
+      const fontSize = Math.max(10, stroke.fontSize || Math.max(14, stroke.size * 2.5));
+      const fontFamily = escapeXmlText(stroke.fontFamily || 'Segoe UI, Arial, sans-serif');
+      const lines = stroke.text.split('\n');
+      const lineHeight = fontSize * 1.25;
+      if (lines.length === 1) {
+        elements += `  <text x="${pt.x}" y="${pt.y + fontSize}" fill="${stroke.color}" font-family="${fontFamily}" font-size="${fontSize}" opacity="${stroke.opacity}">${escapeXmlText(lines[0])}</text>\n`;
+      } else {
+        elements += `  <text x="${pt.x}" y="${pt.y + fontSize}" fill="${stroke.color}" font-family="${fontFamily}" font-size="${fontSize}" opacity="${stroke.opacity}">`;
+        lines.forEach((line, idx) => {
+          const dy = idx === 0 ? 0 : lineHeight;
+          elements += `<tspan x="${pt.x}" dy="${dy}">${escapeXmlText(line)}</tspan>`;
+        });
+        elements += `</text>\n`;
+      }
+      continue;
+    }
+
+    // Geometric & Quick Shapes
+    if (stroke.tool === 'shape' && stroke.shapeType) {
+      const { d, isClosed } = shapeToSvgPathData(stroke.shapeType, stroke.points);
+      if (!d) continue;
+      const fillAttr =
+        isClosed && stroke.fillStyle && stroke.fillStyle !== 'none'
+          ? `fill="${stroke.fillColor || '#FFFFFF'}"`
+          : 'fill="none"';
+      const strokeAttr =
+        stroke.outlineStyle === 'none'
+          ? 'stroke="none"'
+          : `stroke="${stroke.color}" stroke-width="${Math.max(1, stroke.size)}"`;
+      elements += `  <path d="${d}" ${fillAttr} ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" opacity="${stroke.opacity}" />\n`;
+      continue;
+    }
+
+    // Determine stroke width and opacity based on freehand tool
     let strokeWidth = stroke.size;
     let opacity = stroke.opacity;
     let strokeColor = stroke.color;
@@ -933,6 +1001,18 @@ export function exportStrokesToSvgString(
     } else if (stroke.tool === 'brush') {
       strokeWidth = stroke.size * 1.4;
       opacity = Math.min(1.0, stroke.opacity * 0.95);
+    } else if (stroke.tool === 'oil') {
+      strokeWidth = stroke.size * 1.7;
+      opacity = Math.min(1.0, stroke.opacity * 0.96);
+    } else if (stroke.tool === 'watercolor') {
+      strokeWidth = stroke.size * 1.9;
+      opacity = Math.min(1.0, stroke.opacity * 0.45);
+    } else if (stroke.tool === 'crayon') {
+      strokeWidth = stroke.size * 1.35;
+      opacity = stroke.opacity * 0.85;
+    } else if (stroke.tool === 'airbrush') {
+      strokeWidth = stroke.size * 2.1;
+      opacity = stroke.opacity * 0.28;
     } else if (stroke.tool === 'bucket') {
       strokeWidth = stroke.size * 2.8;
       opacity = Math.min(1.0, stroke.opacity * 1.0);

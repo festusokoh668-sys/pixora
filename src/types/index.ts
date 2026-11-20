@@ -35,7 +35,9 @@ export type ShapeType =
   | 'star-5'
   | 'star-6'
   | 'heart'
-  | 'callout';
+  | 'callout'
+  | 'cloud'
+  | 'lightning';
 
 export type ShapeOutlineStyle =
   | 'solid'
@@ -58,6 +60,8 @@ export type ShapeFillStyle =
 export type PaintFinish = 'oil' | 'acrylic' | 'ink' | 'graphite' | 'watercolor';
 
 export type MirrorMode = 'none' | 'horizontal' | 'vertical' | 'quad';
+
+export type LayerFilterType = 'grayscale' | 'sepia' | 'invert';
 
 export interface Point {
   x: number;

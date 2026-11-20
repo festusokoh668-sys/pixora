@@ -137,3 +137,28 @@ export function calculateWheelZoomAndPan(input: WheelZoomInput): {
     containerHeight: input.containerHeight,
   });
 }
+
+/**
+ * Computes canvas dimensions that expand cleanly throughout the entire available workspace viewport.
+ * When strokes already exist on the canvas, only expands (never shrinks smaller than existing artwork)
+ * so user strokes are never accidentally clipped on viewport shrink.
+ */
+export function calculateFullScreenCanvasDimensions(
+  workspaceWidth: number,
+  workspaceHeight: number,
+  currentDimensions?: { width: number; height: number },
+  hasStrokes: boolean = false
+): { width: number; height: number } {
+  const targetW = Math.max(320, Math.floor(Number.isFinite(workspaceWidth) ? workspaceWidth : 819));
+  const targetH = Math.max(240, Math.floor(Number.isFinite(workspaceHeight) ? workspaceHeight : 460));
+
+  if (hasStrokes && currentDimensions) {
+    return {
+      width: Math.max(currentDimensions.width, targetW),
+      height: Math.max(currentDimensions.height, targetH),
+    };
+  }
+
+  return { width: targetW, height: targetH };
+}
+

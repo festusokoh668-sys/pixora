@@ -352,5 +352,105 @@ test('getShapeVertices generates accurate triangle, diamond, and 5-point star co
 
   const star = getShapeVertices('star-5', { x: 0, y: 0 }, { x: 100, y: 100 });
   assert.equal(star.length, 10);
+
+  const lightning = getShapeVertices('lightning', { x: 0, y: 0 }, { x: 100, y: 100 });
+  assert.equal(lightning.length, 6);
 });
+
+test('QUICK_SHAPES provides curated hearts, stars, and speech bubble with closed Canvas2D paths', async () => {
+  const { QUICK_SHAPES, traceShapePath } = await import('./shapes');
+
+  const ids = QUICK_SHAPES.map((s) => s.id);
+  assert.ok(ids.includes('heart'), 'QUICK_SHAPES should include heart');
+  assert.ok(ids.includes('star-5'), 'QUICK_SHAPES should include star-5');
+  assert.ok(ids.includes('callout'), 'QUICK_SHAPES should include callout speech bubble');
+  assert.ok(ids.includes('cloud'), 'QUICK_SHAPES should include cloud');
+  assert.ok(ids.includes('lightning'), 'QUICK_SHAPES should include lightning');
+
+  const mockCtx = {
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    bezierCurveTo: () => {},
+    quadraticCurveTo: () => {},
+    closePath: () => {},
+    rect: () => {},
+    roundRect: () => {},
+    ellipse: () => {},
+  } as unknown as CanvasRenderingContext2D;
+
+  for (const sh of QUICK_SHAPES) {
+    const res = traceShapePath(mockCtx, sh.id, [
+      { x: 20, y: 20 },
+      { x: 160, y: 140 },
+    ]);
+    assert.equal(res.isClosed, true, `Quick shape ${sh.id} should trace a closed fillable path`);
+  }
+});
+
+test('generateArtworkFilename supports jpg, png, and svg extensions', () => {
+  const jpgName = generateArtworkFilename('Sunset Sketch', 'jpg');
+  const pngName = generateArtworkFilename('Sunset Sketch', 'png');
+  const svgName = generateArtworkFilename('Sunset Sketch', 'svg');
+
+  assert.ok(jpgName.startsWith('Pixora_Sunset_Sketch_') && jpgName.endsWith('.jpg'));
+  assert.ok(pngName.startsWith('Pixora_Sunset_Sketch_') && pngName.endsWith('.png'));
+  assert.ok(svgName.startsWith('Pixora_Sunset_Sketch_') && svgName.endsWith('.svg'));
+});
+
+test('exportStrokesToSvgString serializes geometric shapes, text annotations, and raster bitmap patches', () => {
+  const shapeStroke = {
+    id: 'shape_1',
+    tool: 'shape' as const,
+    shapeType: 'heart' as const,
+    outlineStyle: 'solid' as const,
+    fillStyle: 'solid' as const,
+    color: '#ED1C24',
+    fillColor: '#FFAEC9',
+    size: 4,
+    opacity: 1,
+    points: [
+      { x: 100, y: 100 },
+      { x: 220, y: 220 },
+    ],
+  };
+
+  const textStroke = {
+    id: 'text_1',
+    tool: 'text' as const,
+    color: '#1979CA',
+    size: 6,
+    opacity: 1,
+    points: [{ x: 40, y: 60 }],
+    text: 'Hello <Pixora>',
+    fontSize: 18,
+  };
+
+  const bitmapStroke = {
+    id: 'bitmap_1',
+    tool: 'select' as const,
+    color: '#000000',
+    size: 1,
+    opacity: 1,
+    points: [],
+    operation: 'replace-bitmap' as const,
+    rect: { x: 0, y: 0, width: 800, height: 600 },
+    rasterDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+  };
+
+  const svg = exportStrokesToSvgString([bitmapStroke, shapeStroke, textStroke], {
+    width: 800,
+    height: 600,
+    title: 'Export Test',
+    includeWatermark: false,
+  });
+
+  assert.ok(svg.includes('<image href="data:image/png;base64,iVBORw0KGgo=" x="0" y="0" width="800" height="600"'));
+  assert.ok(svg.includes('fill="#FFAEC9" stroke="#ED1C24" stroke-width="4"'));
+  assert.ok(svg.includes('<text x="40" y="78" fill="#1979CA"'));
+  assert.ok(svg.includes('Hello &lt;Pixora&gt;</text>'));
+  assert.ok(!svg.includes('PIXORA Studio'));
+});
+
+
 
