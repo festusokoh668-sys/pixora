@@ -265,8 +265,8 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
         />
 
         {/* Search, Upload, and Clean Spacious Filters */}
-        <div className="p-5 border-b border-slate-100 bg-slate-50/70 flex flex-col gap-4">
-          <div className="flex items-center gap-3">
+        <div className="p-3 sm:p-5 border-b border-slate-100 bg-slate-50/70 flex flex-col gap-2.5 sm:gap-3.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Live Search Box */}
             <div className="relative flex-1">
               {isSearchingOnline ? (
@@ -279,7 +279,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search paint books by title or category..."
-                className="w-full pl-10 pr-9 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors shadow-sm font-medium"
+                className="w-full pl-9 sm:pl-10 pr-8 py-2 sm:py-2.5 bg-white border border-slate-200 rounded-2xl text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors shadow-sm font-medium"
               />
               {searchQuery && (
                 <button
@@ -298,7 +298,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                 onClearTemplate();
                 onClose();
               }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs sm:text-sm transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs sm:text-sm transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
               title="Start with a clean blank canvas"
             >
               <FileText className="w-4 h-4 text-slate-500" />
@@ -308,7 +308,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
             {/* Upload Own Picture */}
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 text-white font-bold text-xs sm:text-sm hover:bg-blue-700 transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-blue-600 text-white font-bold text-xs sm:text-sm hover:bg-blue-700 transition-all shrink-0 cursor-pointer shadow-sm active:scale-95"
               title="Upload your own photo or video to trace"
             >
               <Upload className="w-4 h-4" />
@@ -318,17 +318,17 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
           </div>
 
           {/* Clean Level Filter Row */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-xs">
-            <span className="text-[12px] font-black text-slate-500 uppercase tracking-wider shrink-0 w-24 flex items-center gap-1.5">
-              <Award className="w-4 h-4 text-blue-600" />
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 text-xs">
+            <span className="text-[11px] sm:text-[12px] font-black text-slate-500 uppercase tracking-wider shrink-0 sm:w-24 flex items-center gap-1.5">
+              <Award className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600" />
               <span>Level:</span>
             </span>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 no-scrollbar">
               {difficultyFilters.map((diff) => (
                 <button
                   key={diff.id}
                   onClick={() => setSelectedDifficulty(diff.id)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                  className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-bold transition-all cursor-pointer shrink-0 ${
                     selectedDifficulty === diff.id
                       ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-400/30 font-black'
                       : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -341,16 +341,16 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
           </div>
 
           {/* Clean Categories Filter Row */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-xs">
-            <span className="text-[12px] font-black text-slate-500 uppercase tracking-wider shrink-0 w-24">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 text-xs">
+            <span className="text-[11px] sm:text-[12px] font-black text-slate-500 uppercase tracking-wider shrink-0 sm:w-24">
               Categories:
             </span>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 no-scrollbar">
               {categoryFilters.map((f) => (
                 <button
                   key={f.id}
                   onClick={() => setSelectedFilter(f.id)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                  className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
                     selectedFilter === f.id
                       ? 'bg-slate-900 text-white shadow-sm font-black'
                       : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -382,7 +382,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
         </div>
 
         {/* Template Grid */}
-        <div className="p-4 sm:p-5 overflow-y-auto flex-1 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50/40">
+        <div className="p-3 sm:p-5 overflow-y-auto flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-4 gap-3 auto-rows-max content-start bg-slate-50/40">
           {/* Expanded Individual Outline Photo Stencils (When category or difficulty is filtered) */}
           {shouldExpandLevels &&
             expandedTemplates.map((template) => {
@@ -400,20 +400,20 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                     onSelectTemplate(template);
                     onClose();
                   }}
-                  className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all group cursor-pointer relative overflow-hidden bg-white ${
+                  className={`p-2 rounded-2xl border text-left flex flex-col justify-between transition-all group cursor-pointer relative bg-white ${
                     isSelected
                       ? 'border-blue-600 ring-2 ring-blue-500/30 bg-blue-50/20 shadow-md'
                       : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
                   }`}
                 >
-                  {/* Media Preview Box */}
-                  <div className="w-full h-36 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center border border-slate-200">
+                  {/* Full-Scale Shrink-to-Fit Picture Frame */}
+                  <div className="w-full aspect-[4/3] shrink-0 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center p-2 border border-slate-200/80">
                     {safeUrl ? (
                       <img
                         src={safeUrl}
                         alt={template.name}
                         referrerPolicy="no-referrer"
-                        className="w-full h-full object-contain p-2 filter contrast(125%) group-hover:scale-105 transition-transform duration-300"
+                        className="max-w-full max-h-full w-auto h-auto object-contain filter contrast(125%)"
                         onError={(e) => {
                           const target = e.currentTarget;
                           target.onerror = null;
@@ -432,21 +432,19 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                         <Check className="w-3.5 h-3.5" />
                       </div>
                     )}
-
-                    {/* Category Pill Tag */}
-                    <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-white/95 backdrop-blur-sm text-[9px] font-bold text-slate-700 uppercase tracking-wider shadow-sm border border-slate-200/60">
-                      {template.category}
-                    </span>
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between gap-1 mb-1">
+                    <div className="flex items-center justify-between gap-1 mb-0.5">
                       <span className="text-xs font-bold text-slate-900 truncate" title={template.name}>
                         {template.name}
                       </span>
                       {renderDifficultyBadge(template.difficulty)}
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-blue-600 font-semibold group-hover:text-blue-700">
+                    <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      {template.category}
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-blue-600 font-semibold group-hover:text-blue-700">
                       <span>Tap to trace outline</span>
                       <span className="text-sm font-bold">→</span>
                     </div>
@@ -487,14 +485,14 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                       : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
                   }`}
                 >
-                  {/* Media Preview Box */}
-                  <div className="w-full h-36 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center border border-slate-200">
+                  {/* Full-Scale Shrink-to-Fit Picture Frame */}
+                  <div className="w-full aspect-[4/3] shrink-0 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center p-2 border border-slate-200/80">
                     {safeUrl ? (
                       <img
                         src={safeUrl}
                         alt={`${col.title} (${activeLevel})`}
                         referrerPolicy="no-referrer"
-                        className="w-full h-full object-contain p-2 filter contrast(125%) group-hover:scale-105 transition-transform duration-300"
+                        className="max-w-full max-h-full w-auto h-auto object-contain filter contrast(125%)"
                         onError={(e) => {
                           const target = e.currentTarget;
                           target.onerror = null;
@@ -513,19 +511,17 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                         <Check className="w-3.5 h-3.5" />
                       </div>
                     )}
-
-                    {/* Category Pill Tag */}
-                    <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-white/95 backdrop-blur-sm text-[9px] font-bold text-slate-700 uppercase tracking-wider shadow-sm border border-slate-200/60">
-                      {col.category}
-                    </span>
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between gap-1 mb-1">
+                    <div className="flex items-center justify-between gap-1 mb-0.5">
                       <span className="text-xs font-bold text-slate-900 truncate" title={col.title}>
                         {col.title}
                       </span>
                       {renderDifficultyBadge(activeLevel)}
+                    </div>
+                    <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      {col.category}
                     </div>
 
                     {/* Easy, Medium, Hard Difficulty Level Selectors */}
@@ -614,13 +610,13 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
                           : 'border-slate-200 hover:border-blue-400 hover:shadow-md'
                       }`}
                     >
-                      <div className="w-full h-28 mb-2 rounded-xl overflow-hidden bg-slate-100 relative flex items-center justify-center border border-slate-200">
+                      <div className="w-full aspect-[4/3] shrink-0 mb-2 rounded-xl overflow-hidden bg-white relative flex items-center justify-center p-2 border border-slate-200">
                         {safeUrl ? (
                           <img
                             src={safeUrl}
                             alt={template.name}
                             referrerPolicy="no-referrer"
-                            className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform duration-300"
+                            className="max-w-full max-h-full w-auto h-auto object-contain"
                             onError={(e) => {
                               const target = e.currentTarget;
                               target.onerror = null;

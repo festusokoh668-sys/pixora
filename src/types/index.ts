@@ -1,9 +1,75 @@
-export type ToolType = 'pencil' | 'brush' | 'bucket' | 'highlighter' | 'calligraphy' | 'eraser';
+export type ToolType =
+  | 'pencil'
+  | 'brush'
+  | 'bucket'
+  | 'highlighter'
+  | 'calligraphy'
+  | 'airbrush'
+  | 'oil'
+  | 'crayon'
+  | 'watercolor'
+  | 'eraser'
+  | 'picker'
+  | 'magnifier'
+  | 'text'
+  | 'select'
+  | 'shape';
+
+export type ShapeType =
+  | 'line'
+  | 'curve'
+  | 'oval'
+  | 'rectangle'
+  | 'rounded-rectangle'
+  | 'polygon'
+  | 'triangle'
+  | 'right-triangle'
+  | 'diamond'
+  | 'pentagon'
+  | 'hexagon'
+  | 'arrow-right'
+  | 'arrow-left'
+  | 'arrow-up'
+  | 'arrow-down'
+  | 'star-4'
+  | 'star-5'
+  | 'star-6'
+  | 'heart'
+  | 'callout';
+
+export type ShapeOutlineStyle =
+  | 'solid'
+  | 'none'
+  | 'crayon'
+  | 'marker'
+  | 'oil'
+  | 'pencil'
+  | 'watercolor';
+
+export type ShapeFillStyle =
+  | 'none'
+  | 'solid'
+  | 'crayon'
+  | 'marker'
+  | 'oil'
+  | 'pencil'
+  | 'watercolor';
+
+export type PaintFinish = 'oil' | 'acrylic' | 'ink' | 'graphite' | 'watercolor';
+
+export type MirrorMode = 'none' | 'horizontal' | 'vertical' | 'quad';
 
 export interface Point {
   x: number;
   y: number;
   pressure?: number;
+}
+
+export interface RectBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface Stroke {
@@ -13,6 +79,22 @@ export interface Stroke {
   size: number;
   opacity: number;
   points: Point[];
+  // Physical paint & gradient properties
+  colorEnd?: string;
+  paintFinish?: PaintFinish;
+  // Geometric shape properties (tool === 'shape')
+  shapeType?: ShapeType;
+  outlineStyle?: ShapeOutlineStyle;
+  fillStyle?: ShapeFillStyle;
+  fillColor?: string;
+  // Text annotation properties (tool === 'text')
+  text?: string;
+  fontSize?: number;
+  fontFamily?: string;
+  // Selection / clipboard / raster operations (undoable via HistoryManager)
+  operation?: 'erase-rect' | 'paste-image' | 'replace-bitmap';
+  rect?: RectBounds;
+  rasterDataUrl?: string;
 }
 
 export type TemplateCategory =

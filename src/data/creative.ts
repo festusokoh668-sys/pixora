@@ -100,6 +100,24 @@ export const COLOR_SWATCHES: ColorItem[] = [
   { hex: '#BAFFC9', name: 'Mint' },
 ];
 
+export interface PaintGradientPreset {
+  id: string;
+  name: string;
+  colorStart: string;
+  colorEnd: string;
+}
+
+export const PAINT_GRADIENT_PRESETS: PaintGradientPreset[] = [
+  { id: 'sunset', name: 'Sunset Blaze', colorStart: '#ED1C24', colorEnd: '#FFF200' },
+  { id: 'ocean', name: 'Ocean Depth', colorStart: '#164BCE', colorEnd: '#00F0FF' },
+  { id: 'aurora', name: 'Northern Lights', colorStart: '#1B4332', colorEnd: '#00FF66' },
+  { id: 'royal', name: 'Royal Velvet', colorStart: '#3F48CC', colorEnd: '#FFAEC9' },
+  { id: 'gold', name: 'Imperial Gold', colorStart: '#8D5524', colorEnd: '#FFC90E' },
+  { id: 'fire', name: 'Fire & Coral', colorStart: '#880015', colorEnd: '#FF7F27' },
+  { id: 'cyber', name: 'Cyberpunk Neon', colorStart: '#B800FF', colorEnd: '#00F0FF' },
+  { id: 'pastel', name: 'Peach Blossom', colorStart: '#FFB3BA', colorEnd: '#BAE1FF' },
+];
+
 export const COLOR_SUGGESTIONS: ColorSuggestion[] = [
   { hex: '#164BCE', name: 'Cobalt Royale', description: 'Deep royal blue with master gallery depth' },
   { hex: '#D6A928', name: 'Imperial Gold', description: 'Classic luminous metallic pigment' },

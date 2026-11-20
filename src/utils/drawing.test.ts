@@ -8,6 +8,8 @@ import {
   HistoryManager,
   generateArtworkFilename,
   calculateStrokeBounds,
+  exportStrokesToSvgString,
+  strokePointsToSvgPath,
 } from './drawing';
 
 test('getCanvasCoordinates properly scales coordinates and clamps within bounds', () => {
@@ -100,8 +102,35 @@ test('generateArtworkFilename sanitizes title and formats correctly', () => {
   assert.ok(filename.startsWith('Pixora_Golden_Lion_Sunset_'));
   assert.ok(filename.endsWith('.png'));
 
+  const svgFilename = generateArtworkFilename('Mountain Vista', 'svg');
+  assert.ok(svgFilename.startsWith('Pixora_Mountain_Vista_'));
+  assert.ok(svgFilename.endsWith('.svg'));
+
   const emptyTitleFilename = generateArtworkFilename('   ');
   assert.ok(emptyTitleFilename.startsWith('Pixora_Untitled_Artwork_'));
+});
+
+test('exportStrokesToSvgString generates valid SVG document with stroke paths', () => {
+  const stroke1 = createStroke('brush', '#164BCE', 12, 1, { x: 10, y: 10 });
+  stroke1.points.push({ x: 50, y: 80 });
+  stroke1.points.push({ x: 100, y: 150 });
+
+  const stroke2 = createStroke('calligraphy', '#000000', 8, 0.9, { x: 200, y: 300 });
+
+  const svg = exportStrokesToSvgString([stroke1, stroke2], {
+    title: 'Test Masterpiece',
+    includeWatermark: true,
+  });
+
+  assert.ok(svg.includes('<svg xmlns="http://www.w3.org/2000/svg"'));
+  assert.ok(svg.includes('viewBox="0 0 1200 1200"'));
+  assert.ok(svg.includes('<title>Test Masterpiece</title>'));
+  assert.ok(svg.includes('<rect width="1200" height="1200" fill="#FFFFFF"'));
+  assert.ok(svg.includes('<path d="M 10 10'));
+  assert.ok(svg.includes('stroke="#164BCE"'));
+  assert.ok(svg.includes('<circle cx="200" cy="300"'));
+  assert.ok(svg.includes('PIXORA Studio'));
+  assert.ok(svg.endsWith('</svg>'));
 });
 
 test('calculateStrokeBounds returns correct bounding box with padding', () => {
@@ -166,3 +195,162 @@ test('applyToolStyleToContext configures sharp pen, blunt pencil, and original d
   assert.ok(bucketCtx.lineWidth > paintCtx.lineWidth); // strictly thicker than paint brush
   assert.ok(bucketCtx.shadowBlur >= 4); // rich wet paint laydown
 });
+
+test('getPaintColorPalette produces full physical paint layer tints and highlights', async () => {
+  const { getPaintColorPalette } = await import('./drawing');
+  const palette = getPaintColorPalette('#164BCE');
+
+  assert.equal(palette.baseColor, '#164BCE');
+  assert.ok(palette.shadowColor.startsWith('#'));
+  assert.ok(palette.bristleDark.startsWith('#'));
+  assert.ok(palette.bristleLight.startsWith('#'));
+  assert.ok(palette.glossCrest.startsWith('#'));
+  assert.ok(palette.specularHighlight.startsWith('#'));
+});
+
+test('createStroke preserves colorEnd gradient and paintFinish', () => {
+  const gradientStroke = createStroke(
+    'brush',
+    '#ED1C24',
+    16,
+    0.9,
+    { x: 50, y: 50 },
+    '#FFF200',
+    'oil'
+  );
+
+  assert.equal(gradientStroke.color, '#ED1C24');
+  assert.equal(gradientStroke.colorEnd, '#FFF200');
+  assert.equal(gradientStroke.paintFinish, 'oil');
+});
+
+test('exportStrokesToSvgString generates linearGradient defs for gradient strokes', () => {
+  const stroke = createStroke(
+    'brush',
+    '#164BCE',
+    20,
+    1.0,
+    { x: 100, y: 100 },
+    '#00F0FF',
+    'acrylic'
+  );
+  stroke.points.push({ x: 300, y: 400 });
+
+  const svg = exportStrokesToSvgString([stroke]);
+  assert.ok(svg.includes('<defs>'));
+  assert.ok(svg.includes('<linearGradient id="paint_grad_0"'));
+  assert.ok(svg.includes('stop-color="#164BCE"'));
+  assert.ok(svg.includes('stop-color="#00F0FF"'));
+  assert.ok(svg.includes('stroke="url(#paint_grad_0)"'));
+});
+
+test('getContainDrawRect centers square and portrait images without distortion on wide full-screen canvases', async () => {
+  const { getContainDrawRect } = await import('./drawing');
+
+  // Square image in widescreen 1440x720 container -> should fit height (720x720) centered at x=360
+  const wideFit = getContainDrawRect(1000, 1000, 1440, 720);
+  assert.deepEqual(wideFit, { x: 360, y: 0, width: 720, height: 720 });
+
+  // Landscape 16:9 image in mobile portrait 390x650 container -> should fit width (390x219) centered vertically
+  const portraitFit = getContainDrawRect(1600, 900, 390, 650);
+  assert.equal(portraitFit.x, 0);
+  assert.equal(portraitFit.width, 390);
+  assert.equal(portraitFit.height, 219);
+  assert.equal(portraitFit.y, 216);
+});
+
+test('toggleMirrorAxis toggles horizontal and vertical axes cleanly and supports quad combination', async () => {
+  const { toggleMirrorAxis } = await import('./drawing');
+
+  assert.equal(toggleMirrorAxis('none', 'horizontal'), 'horizontal');
+  assert.equal(toggleMirrorAxis('horizontal', 'horizontal'), 'none');
+  assert.equal(toggleMirrorAxis('horizontal', 'vertical'), 'quad');
+  assert.equal(toggleMirrorAxis('quad', 'horizontal'), 'vertical');
+  assert.equal(toggleMirrorAxis('vertical', 'vertical'), 'none');
+});
+
+test('createMirroredStrokes reflects stroke points across canvas center for horizontal, vertical, and quad modes', async () => {
+  const { createMirroredStrokes } = await import('./drawing');
+  const stroke = createStroke('brush', '#164BCE', 10, 1.0, { x: 200, y: 150, pressure: 0.7 });
+  stroke.points.push({ x: 300, y: 250, pressure: 0.8 });
+
+  // Horizontal reflection across x = 500
+  const horiz = createMirroredStrokes(stroke, 'horizontal', 1000, 800);
+  assert.equal(horiz.length, 2);
+  assert.deepEqual(horiz[1].points.map((p) => [p.x, p.y, p.pressure]), [
+    [800, 150, 0.7],
+    [700, 250, 0.8],
+  ]);
+
+  // Vertical reflection across y = 400
+  const vert = createMirroredStrokes(stroke, 'vertical', 1000, 800);
+  assert.equal(vert.length, 2);
+  assert.deepEqual(vert[1].points.map((p) => [p.x, p.y]), [
+    [200, 650],
+    [300, 550],
+  ]);
+
+  // Quad reflection produces 4 strokes (original + H + V + diagonal)
+  const quad = createMirroredStrokes(stroke, 'quad', 1000, 800);
+  assert.equal(quad.length, 4);
+  assert.deepEqual(quad[3].points.map((p) => [p.x, p.y]), [
+    [800, 650],
+    [700, 550],
+  ]);
+});
+
+test('stabilizePointerPoint filters micro-jitter and applies adaptive EMA smoothing', async () => {
+  const { stabilizePointerPoint } = await import('./drawing');
+  const prev = { x: 100, y: 100, pressure: 0.5 };
+
+  // Sub-threshold tremor is ignored
+  assert.equal(stabilizePointerPoint(prev, { x: 100.4, y: 100.3, pressure: 0.5 }), null);
+
+  // Valid point is smoothly interpolated between prev and raw target
+  const stabilized = stabilizePointerPoint(prev, { x: 110, y: 120, pressure: 0.9 }, 0.5, 1.2);
+  assert.ok(stabilized !== null);
+  assert.ok(stabilized.x > 100 && stabilized.x < 110);
+  assert.ok(stabilized.y > 100 && stabilized.y < 120);
+  assert.ok((stabilized.pressure ?? 0) > 0.5 && (stabilized.pressure ?? 0) < 0.9);
+});
+
+test('smoothStrokePoints attenuates zigzag jitter while preserving exact start/end endpoints', async () => {
+  const { smoothStrokePoints } = await import('./drawing');
+  const jitteryLine = [
+    { x: 0, y: 50, pressure: 0.5 },
+    { x: 10, y: 65, pressure: 0.5 },
+    { x: 20, y: 35, pressure: 0.5 },
+    { x: 30, y: 65, pressure: 0.5 },
+    { x: 40, y: 35, pressure: 0.5 },
+    { x: 50, y: 50, pressure: 0.5 },
+  ];
+
+  const smoothed = smoothStrokePoints(jitteryLine, { passes: 3, subdivide: true });
+  assert.equal(smoothed[0].x, 0);
+  assert.equal(smoothed[0].y, 50);
+  assert.equal(smoothed[smoothed.length - 1].x, 50);
+  assert.equal(smoothed[smoothed.length - 1].y, 50);
+
+  // Peak deviation around y=50 should be significantly damped compared to +-15
+  const maxDeviation = Math.max(...smoothed.map((p) => Math.abs(p.y - 50)));
+  assert.ok(maxDeviation < 8, `Expected jitter damped below 8px, got ${maxDeviation}`);
+});
+
+test('getShapeVertices generates accurate triangle, diamond, and 5-point star coordinates', async () => {
+  const { getShapeVertices } = await import('./shapes');
+
+  const tri = getShapeVertices('triangle', { x: 10, y: 20 }, { x: 110, y: 120 });
+  assert.equal(tri.length, 3);
+  assert.deepEqual(tri[0], { x: 60, y: 20 });
+  assert.deepEqual(tri[1], { x: 110, y: 120 });
+  assert.deepEqual(tri[2], { x: 10, y: 120 });
+
+  const diamond = getShapeVertices('diamond', { x: 0, y: 0 }, { x: 100, y: 80 });
+  assert.equal(diamond.length, 4);
+  assert.deepEqual(diamond[0], { x: 50, y: 0 });
+  assert.deepEqual(diamond[1], { x: 100, y: 40 });
+
+  const star = getShapeVertices('star-5', { x: 0, y: 0 }, { x: 100, y: 100 });
+  assert.equal(star.length, 10);
+});
+

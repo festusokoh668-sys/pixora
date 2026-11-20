@@ -17,6 +17,7 @@ interface ColorsModalProps {
   onClose: () => void;
   currentColor: string;
   onColorChange: (hex: string) => void;
+  onAddCustomColor?: (hex: string) => void;
   themeMode?: 'bright' | 'dark';
   onToggleTheme?: () => void;
 }
@@ -26,6 +27,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
   onClose,
   currentColor,
   onColorChange,
+  onAddCustomColor,
   themeMode,
   onToggleTheme,
 }) => {
@@ -216,7 +218,10 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             )}
 
             <button
-              onClick={onClose}
+              onClick={() => {
+                onAddCustomColor?.(currentColor.toUpperCase());
+                onClose();
+              }}
               className="px-3.5 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-xs text-white shadow-sm active:scale-95 transition-all cursor-pointer"
             >
               Apply

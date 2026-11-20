@@ -1,573 +1,1592 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Eye, EyeOff, Sliders, Play, Pause, Wand2, Loader2, Sparkles, GripVertical, Maximize2, BookOpen } from 'lucide-react';
-import { DrawingTemplate, Point, Stroke, ToolType } from '../types';
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
+import {
+  Eye,
+  EyeOff,
+  Sliders,
+  Play,
+  Pause,
+  Wand2,
+  Loader2,
+  FlipHorizontal,
+  FlipVertical,
+  GripVertical,
+} from 'lucide-react';
+import {
+  DrawingTemplate,
+  MirrorMode,
+  PaintFinish,
+  Point,
+  RectBounds,
+  ShapeFillStyle,
+  ShapeOutlineStyle,
+  ShapeType,
+  Stroke,
+  ToolType,
+} from '../types';
 import {
   getCanvasCoordinates,
-  getMidPoint,
+  getContainDrawRect,
   createStroke,
-  smoothPoints,
-  drawQuadraticPath,
-  applyToolStyleToContext,
+  createMirroredStrokes,
+  toggleMirrorAxis,
+  stabilizePointerPoint,
+  smoothStrokePoints,
   renderStrokeToContext,
+  preloadStrokeRasterImage,
 } from '../utils/drawing';
+import { rgbToHex } from '../utils/color';
+import {
+  clampZoom,
+  getPointerPairMetrics,
+  calculatePinchZoomAndPan,
+  calculateWheelZoomAndPan,
+} from '../utils/viewport';
 import { generateOutlineTraceDataUrl, generateFallbackSvgDataUrl } from '../utils/edgeDetection';
+
+export interface CanvasStudioHandle {
+  cutSelection: () => void;
+  copySelection: () => Promise<void>;
+  pasteClipboard: () => void;
+  selectAll: () => void;
+  clearSelection: () => void;
+  deleteSelection: () => void;
+  cropToSelection: () => void;
+  rotateOrFlip: (action: 'cw90' | 'ccw90' | '180' | 'flipH' | 'flipV') => void;
+  getCanPaste: () => boolean;
+}
 
 interface CanvasStudioProps {
   tool: ToolType;
+  shapeType?: ShapeType;
+  outlineStyle?: ShapeOutlineStyle;
+  fillStyle?: ShapeFillStyle;
   color: string;
+  secondaryColor?: string;
   size: number;
   opacity: number;
+  colorEnd?: string | null;
+  paintFinish?: PaintFinish;
   strokes: Stroke[];
   onStrokesChange: (newStrokes: Stroke[]) => void;
+  onColorChange?: (hex: string) => void;
+  onSecondaryColorChange?: (hex: string) => void;
+  onPickedColorComplete?: () => void;
   activeTemplate: DrawingTemplate | null;
   lastClosedTemplate?: DrawingTemplate | null;
   templateOpacity: number;
   onTemplateOpacityChange: (opacity: number) => void;
-  onOpenTemplates: () => void;
   onClearTemplate: () => void;
-  onRestoreTemplate?: () => void;
+  zoomLevel?: number;
+  onZoomChange?: (zoom: number) => void;
+  resetViewSignal?: number;
+  showGrid?: boolean;
+  showRulers?: boolean;
+  mirrorMode?: MirrorMode;
+  onMirrorModeChange?: (mode: MirrorMode) => void;
+  onCanvasStrokeStart?: () => void;
+  canvasDimensions: { width: number; height: number };
+  onCanvasDimensionsChange: (dims: { width: number; height: number }) => void;
+  onCursorPositionChange?: (pos: { x: number; y: number } | null) => void;
+  onSelectionSizeChange?: (dims: { width: number; height: number } | null) => void;
+  onHasSelectionChange?: (hasSelection: boolean) => void;
+  onClipboardChange?: (canPaste: boolean) => void;
+  onNotify?: (msg: string) => void;
 }
 
-export const CanvasStudio: React.FC<CanvasStudioProps> = ({
-  tool,
-  color,
-  size,
-  opacity,
-  strokes,
-  onStrokesChange,
-  activeTemplate,
-  lastClosedTemplate,
-  templateOpacity,
-  onTemplateOpacityChange,
-  onOpenTemplates,
-  onClearTemplate,
-  onRestoreTemplate,
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const isDrawingRef = useRef<boolean>(false);
-  const currentStrokeRef = useRef<Stroke | null>(null);
-  const prevMidPointRef = useRef<Point | null>(null);
+export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
+  (
+    {
+      tool,
+      shapeType = 'rectangle',
+      outlineStyle = 'solid',
+      fillStyle = 'none',
+      color,
+      secondaryColor = '#FFFFFF',
+      size,
+      opacity,
+      colorEnd,
+      paintFinish,
+      strokes,
+      onStrokesChange,
+      onColorChange,
+      onSecondaryColorChange,
+      onPickedColorComplete,
+      activeTemplate,
+      templateOpacity,
+      onTemplateOpacityChange,
+      onClearTemplate,
+      zoomLevel: zoomLevelProp,
+      onZoomChange,
+      resetViewSignal,
+      showGrid = false,
+      showRulers = false,
+      mirrorMode: mirrorModeProp,
+      onMirrorModeChange,
+      onCanvasStrokeStart,
+      canvasDimensions,
+      onCanvasDimensionsChange,
+      onCursorPositionChange,
+      onSelectionSizeChange,
+      onHasSelectionChange,
+      onClipboardChange,
+      onNotify,
+    },
+    ref
+  ) => {
+    const workspaceRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const videoRef = useRef<HTMLVideoElement>(null);
 
-  const [canvasDimensions, setCanvasDimensions] = useState<{ width: number; height: number }>({
-    width: 1200,
-    height: 1200,
-  });
+    const isDrawingRef = useRef<boolean>(false);
+    const currentStrokeRef = useRef<Stroke | null>(null);
+    const canvasRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+    const activeRafIdRef = useRef<number | null>(null);
 
-  const [showTemplateGuide, setShowTemplateGuide] = useState<boolean>(true);
-  const [showOpacitySlider, setShowOpacitySlider] = useState<boolean>(false);
+    // Selection & clipboard state
+    const [selectionRect, setSelectionRect] = useState<RectBounds | null>(null);
+    const selectionDragStartRef = useRef<Point | null>(null);
+    const isMovingSelectionRef = useRef<boolean>(false);
+    const moveOriginRectRef = useRef<RectBounds | null>(null);
+    const moveStartPointRef = useRef<Point | null>(null);
+    const floatingSelectionImgRef = useRef<{
+      dataUrl: string;
+      img: HTMLImageElement | null;
+      origRect: RectBounds;
+      offsetX: number;
+      offsetY: number;
+    } | null>(null);
+    const clipboardRasterRef = useRef<{ dataUrl: string; width: number; height: number } | null>(null);
 
-  // Default to Trace Outline Mode so pictures appear as clean line art outline stencils
-  const [traceMode, setTraceMode] = useState<'outline' | 'grayscale' | 'color'>('outline');
-  const [outlineDetailThreshold, setOutlineDetailThreshold] = useState<number>(38);
-  const [processedTraceUrl, setProcessedTraceUrl] = useState<string | null>(null);
-  const [isProcessingOutline, setIsProcessingOutline] = useState<boolean>(false);
-  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
-  // Canvas Zoom & Pan Feature State (50% to 350%)
-  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
-  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    // Inline Text Tool state
+    const [activeTextBox, setActiveTextBox] = useState<{
+      x: number;
+      y: number;
+      text: string;
+    } | null>(null);
+    const textInputRef = useRef<HTMLTextAreaElement>(null);
 
-  const pinchStartDistRef = useRef<number>(0);
-  const pinchStartZoomRef = useRef<number>(1.0);
-  const pinchStartCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const pinchStartPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const isPinchingRef = useRef<boolean>(false);
+    // Curve multi-step & Polygon multi-vertex state
+    const curveStageRef = useRef<{
+      stroke: Stroke;
+      clicksLeft: number;
+    } | null>(null);
+    const polygonDraftRef = useRef<Stroke | null>(null);
 
-  const handleZoomIn = useCallback(() => {
-    setZoomLevel((prev) => Math.min(3.5, Math.round((prev + 0.25) * 100) / 100));
-  }, []);
+    // Canvas Edge Handle Resize preview state
+    const [resizingPreview, setResizingPreview] = useState<{ width: number; height: number } | null>(null);
 
-  const handleZoomOut = useCallback(() => {
-    setZoomLevel((prev) => Math.max(0.5, Math.round((prev - 0.25) * 100) / 100));
-  }, []);
+    // Template Tracing HUD state
+    const [showTemplateGuide, setShowTemplateGuide] = useState<boolean>(true);
+    const [showOpacitySlider, setShowOpacitySlider] = useState<boolean>(false);
+    const [traceMode, setTraceMode] = useState<'outline' | 'grayscale' | 'color'>('outline');
+    const [outlineDetailThreshold, setOutlineDetailThreshold] = useState<number>(38);
+    const [processedTraceUrl, setProcessedTraceUrl] = useState<string | null>(null);
+    const [isProcessingOutline, setIsProcessingOutline] = useState<boolean>(false);
+    const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
+    const [loadedTemplateImage, setLoadedTemplateImage] = useState<HTMLImageElement | null>(null);
 
-  const handleResetZoom = useCallback(() => {
-    setZoomLevel(1.0);
-    setPanOffset({ x: 0, y: 0 });
-  }, []);
+    // Internal Zoom fallback & Symmetry state
+    const [internalZoomLevel, setInternalZoomLevel] = useState<number>(1.0);
+    const zoomLevel = zoomLevelProp ?? internalZoomLevel;
+    const latestZoomRef = useRef<number>(zoomLevel);
+    latestZoomRef.current = zoomLevel;
 
-  // Multi-Touch Pinch to Zoom & Pan Handlers
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length >= 2) {
-      if (isDrawingRef.current) {
-        isDrawingRef.current = false;
-        currentStrokeRef.current = null;
-        redrawCanvas();
-      }
-      isPinchingRef.current = true;
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-      const center = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+    const [internalSymmetryMode, setInternalSymmetryMode] = useState<MirrorMode>('none');
+    const symmetryMode: MirrorMode = mirrorModeProp ?? internalSymmetryMode;
 
-      pinchStartDistRef.current = dist > 0 ? dist : 1;
-      pinchStartZoomRef.current = zoomLevel;
-      pinchStartCenterRef.current = center;
-      pinchStartPanRef.current = { ...panOffset };
-    }
-  };
+    // Draggable Template HUD offset
+    const [hudOffset, setHudOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    const [isDraggingHud, setIsDraggingHud] = useState<boolean>(false);
+    const isDraggingHudRef = useRef<boolean>(false);
+    const dragStartPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const dragStartOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length >= 2 && isPinchingRef.current) {
-      e.preventDefault();
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-      const center = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+    const opacityPopoverRef = useRef<HTMLDivElement>(null);
+    const opacityButtonRef = useRef<HTMLButtonElement>(null);
 
-      const scale = dist / pinchStartDistRef.current;
-      const newZoom = Math.min(3.5, Math.max(0.5, Math.round(pinchStartZoomRef.current * scale * 100) / 100));
-      setZoomLevel(newZoom);
+    // Multi-touch Pinch-to-Zoom & 2-Finger Scroll Panning
+    const activePointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map());
+    const suppressDrawingUntilAllUpRef = useRef<boolean>(false);
+    const pinchStartDistRef = useRef<number>(0);
+    const pinchStartZoomRef = useRef<number>(1.0);
+    const pinchStartCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const pinchStartScrollRef = useRef<{ left: number; top: number }>({ left: 0, top: 0 });
+    const isPinchingRef = useRef<boolean>(false);
 
-      const dx = center.x - pinchStartCenterRef.current.x;
-      const dy = center.y - pinchStartCenterRef.current.y;
-      setPanOffset({
-        x: pinchStartPanRef.current.x + dx,
-        y: pinchStartPanRef.current.y + dy,
-      });
-    }
-  };
+    // Offscreen layers
+    const strokesCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const baseCompositeCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (e.touches.length < 2) {
-      isPinchingRef.current = false;
-    }
-  };
-
-  // Trackpad & Wheel Pinch-to-Zoom & Pan
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const delta = e.deltaY < 0 ? 0.1 : -0.1;
-        setZoomLevel((prev) => Math.min(3.5, Math.max(0.5, Math.round((prev + delta) * 100) / 100)));
-      } else if (zoomLevel > 1.0 || panOffset.x !== 0 || panOffset.y !== 0) {
-        e.preventDefault();
-        setPanOffset((prev) => ({
-          x: prev.x - e.deltaX,
-          y: prev.y - e.deltaY,
-        }));
-      }
-    };
-
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [zoomLevel, panOffset]);
-
-  // Draggable Title Block HUD State
-  const [hudOffset, setHudOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDraggingHud, setIsDraggingHud] = useState<boolean>(false);
-  const isDraggingHudRef = useRef<boolean>(false);
-  const dragStartPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const dragStartOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  const handleHudPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button, input, [role="button"]')) {
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {}
-    isDraggingHudRef.current = true;
-    setIsDraggingHud(true);
-    dragStartPointerRef.current = { x: e.clientX, y: e.clientY };
-    dragStartOffsetRef.current = { ...hudOffset };
-  };
-
-  const handleHudPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingHudRef.current) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const dx = e.clientX - dragStartPointerRef.current.x;
-    const dy = e.clientY - dragStartPointerRef.current.y;
-    setHudOffset({
-      x: dragStartOffsetRef.current.x + dx,
-      y: dragStartOffsetRef.current.y + dy,
-    });
-  };
-
-  const handleHudPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingHudRef.current) return;
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    isDraggingHudRef.current = false;
-    setIsDraggingHud(false);
-  };
-
-  const opacityPopoverRef = useRef<HTMLDivElement>(null);
-  const opacityButtonRef = useRef<HTMLButtonElement>(null);
-
-  // Close Guide Opacity & Sensitivity popover when clicking outside
-  useEffect(() => {
-    if (!showOpacitySlider) return;
-    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
-      const target = e.target as Node;
-      if (
-        opacityPopoverRef.current &&
-        !opacityPopoverRef.current.contains(target) &&
-        opacityButtonRef.current &&
-        !opacityButtonRef.current.contains(target)
-      ) {
-        setShowOpacitySlider(false);
-      }
-    };
-    document.addEventListener('pointerdown', handleOutsideClick);
-    return () => document.removeEventListener('pointerdown', handleOutsideClick);
-  }, [showOpacitySlider]);
-
-  // Resize canvas based on container dimensions
-  useEffect(() => {
-    const updateSize = () => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const padding = 20;
-      const availableWidth = Math.max(300, rect.width - padding);
-      const availableHeight = Math.max(350, rect.height - padding);
-
-      const sizeToUse = Math.min(availableWidth, availableHeight, 1400);
-      setCanvasDimensions({
-        width: Math.floor(sizeToUse * 1.5),
-        height: Math.floor(sizeToUse * 1.5),
-      });
-    };
-
-    updateSize();
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
-  }, []);
-
-  // Process template image with Sobel edge detection to generate crisp outline trace
-  useEffect(() => {
-    const isPredefinedOutline =
-      activeTemplate?.mediaUrl?.includes('/assets/aistudio/') ||
-      Boolean(activeTemplate?.collectionId);
-
-    if (!activeTemplate || !activeTemplate.mediaUrl || activeTemplate.type === 'vector' || isPredefinedOutline) {
-      setProcessedTraceUrl(null);
-      setIsProcessingOutline(false);
-      return;
-    }
-
-    let isSubscribed = true;
-    setIsProcessingOutline(true);
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.referrerPolicy = 'no-referrer';
-
-    img.onload = () => {
-      if (!isSubscribed) return;
-      try {
-        const traceUrl = generateOutlineTraceDataUrl(img, {
-          threshold: outlineDetailThreshold,
-        });
-        if (traceUrl && isSubscribed) {
-          setProcessedTraceUrl(traceUrl);
+    const setZoomLevel = useCallback(
+      (nextOrUpdater: number | ((prev: number) => number)) => {
+        const prevVal = latestZoomRef.current;
+        const nextVal = typeof nextOrUpdater === 'function' ? nextOrUpdater(prevVal) : nextOrUpdater;
+        const clamped = clampZoom(nextVal);
+        latestZoomRef.current = clamped;
+        if (onZoomChange) {
+          onZoomChange(clamped);
+        } else {
+          setInternalZoomLevel(clamped);
         }
-      } catch (err) {
-        console.warn('Trace outline generation fallback:', err);
-      } finally {
-        if (isSubscribed) setIsProcessingOutline(false);
-      }
-    };
+      },
+      [onZoomChange]
+    );
 
-    img.onerror = () => {
-      if (isSubscribed) {
+    const updateSymmetryMode = useCallback(
+      (nextOrUpdater: MirrorMode | ((prev: MirrorMode) => MirrorMode)) => {
+        const nextMode =
+          typeof nextOrUpdater === 'function' ? nextOrUpdater(symmetryMode) : nextOrUpdater;
+        if (onMirrorModeChange) {
+          onMirrorModeChange(nextMode);
+        } else {
+          setInternalSymmetryMode(nextMode);
+        }
+      },
+      [symmetryMode, onMirrorModeChange]
+    );
+
+    const handleToggleMirrorAxis = useCallback(
+      (axis: 'horizontal' | 'vertical') => {
+        updateSymmetryMode((prev) => toggleMirrorAxis(prev, axis));
+      },
+      [updateSymmetryMode]
+    );
+
+    // Sync selection flags to parent Ribbon
+    useEffect(() => {
+      onHasSelectionChange?.(Boolean(selectionRect && selectionRect.width >= 2 && selectionRect.height >= 2));
+      if (selectionRect && selectionRect.width >= 2 && selectionRect.height >= 2) {
+        onSelectionSizeChange?.({ width: selectionRect.width, height: selectionRect.height });
+      } else {
+        onSelectionSizeChange?.(null);
+      }
+    }, [selectionRect, onHasSelectionChange, onSelectionSizeChange]);
+
+    // Scroll back to top-left on resetViewSignal
+    const prevResetSignalRef = useRef<number | undefined>(resetViewSignal);
+    useEffect(() => {
+      if (resetViewSignal !== undefined && resetViewSignal !== prevResetSignalRef.current) {
+        prevResetSignalRef.current = resetViewSignal;
+        if (workspaceRef.current) {
+          workspaceRef.current.scrollTo({ left: 0, top: 0 });
+        }
+      }
+    }, [resetViewSignal]);
+
+    // Close opacity popover outside click
+    useEffect(() => {
+      if (!showOpacitySlider) return;
+      const handleOutsideClick = (e: MouseEvent) => {
+        const target = e.target as Node;
+        if (
+          opacityPopoverRef.current &&
+          !opacityPopoverRef.current.contains(target) &&
+          opacityButtonRef.current &&
+          !opacityButtonRef.current.contains(target)
+        ) {
+          setShowOpacitySlider(false);
+        }
+      };
+      document.addEventListener('pointerdown', handleOutsideClick);
+      return () => document.removeEventListener('pointerdown', handleOutsideClick);
+    }, [showOpacitySlider]);
+
+    // Sobel Edge Detection for uploaded photo stencils
+    useEffect(() => {
+      const isPredefinedOutline =
+        activeTemplate?.mediaUrl?.includes('/assets/aistudio/') ||
+        Boolean(activeTemplate?.collectionId);
+
+      if (!activeTemplate || !activeTemplate.mediaUrl || activeTemplate.type === 'vector' || isPredefinedOutline) {
         setProcessedTraceUrl(null);
         setIsProcessingOutline(false);
+        return;
       }
-    };
 
-    const safeUrl = activeTemplate.mediaUrl.startsWith('data:')
-      ? activeTemplate.mediaUrl
-      : encodeURI(decodeURI(activeTemplate.mediaUrl));
-    img.src = safeUrl;
+      let isSubscribed = true;
+      setIsProcessingOutline(true);
 
-    return () => {
-      isSubscribed = false;
-    };
-  }, [activeTemplate, outlineDetailThreshold]);
-
-  // Pre-load active template image object for canvas rendering & flood fill line detection
-  const [loadedTemplateImage, setLoadedTemplateImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    if (!activeTemplate || !activeTemplate.mediaUrl) {
-      setLoadedTemplateImage(null);
-      return;
-    }
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.referrerPolicy = 'no-referrer';
-    img.onload = () => {
-      setLoadedTemplateImage(img);
-    };
-    img.onerror = () => {
-      setLoadedTemplateImage(null);
-    };
-    img.src = activeTemplate.mediaUrl.startsWith('data:')
-      ? activeTemplate.mediaUrl
-      : encodeURI(decodeURI(activeTemplate.mediaUrl));
-  }, [activeTemplate]);
-
-  const applyToolStyle = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
-    applyToolStyleToContext(ctx, stroke, 'canvas');
-  };
-
-  const drawStroke = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
-    renderStrokeToContext(ctx, stroke, 'canvas');
-  };
-
-  // Offscreen layer for user strokes to prevent eraser from destroying underlying Paint Book template pictures
-  const strokesCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // Render all strokes onto the canvas
-  const redrawCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    if (!strokesCanvasRef.current) {
-      strokesCanvasRef.current = document.createElement('canvas');
-    }
-    const strokesCanvas = strokesCanvasRef.current;
-    if (strokesCanvas.width !== canvas.width || strokesCanvas.height !== canvas.height) {
-      strokesCanvas.width = canvas.width;
-      strokesCanvas.height = canvas.height;
-    }
-    const strokesCtx = strokesCanvas.getContext('2d');
-    if (!strokesCtx) return;
-
-    // 1. Clear both main canvas and user strokes layer
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    strokesCtx.clearRect(0, 0, strokesCanvas.width, strokesCanvas.height);
-
-    // 2. Render all user strokes onto isolated user strokes layer
-    for (const stroke of strokes) {
-      drawStroke(strokesCtx, stroke);
-    }
-    if (currentStrokeRef.current) {
-      drawStroke(strokesCtx, currentStrokeRef.current);
-    }
-
-    // 3. Fill crisp white drawing paper background on main canvas
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // 4. Draw base Paint Book template guide onto canvas if active
-    if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
-      ctx.save();
-      ctx.globalAlpha = Math.max(0.35, templateOpacity);
-      ctx.drawImage(loadedTemplateImage, 0, 0, canvas.width, canvas.height);
-      ctx.restore();
-    }
-
-    // 5. Draw user painted strokes ON TOP of the paper and template image
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(strokesCanvas, 0, 0);
-    ctx.restore();
-
-    // 6. Re-overlay crisp stencil outline lines OVER user paint so Paint Book pictures NEVER get erased or cleaned
-    if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = Math.min(1.0, templateOpacity * 1.25);
-      ctx.drawImage(loadedTemplateImage, 0, 0, canvas.width, canvas.height);
-      ctx.restore();
-    }
-  }, [strokes, activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity]);
-
-  useEffect(() => {
-    redrawCanvas();
-  }, [strokes, canvasDimensions, redrawCanvas]);
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isPinchingRef.current) return;
-    e.preventDefault();
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    canvas.setPointerCapture(e.pointerId);
-
-    const rect = canvas.getBoundingClientRect();
-    const point = getCanvasCoordinates(
-      e.clientX,
-      e.clientY,
-      rect,
-      canvasDimensions.width,
-      canvasDimensions.height
-    );
-
-    // Paint Bucket flood fill: instantly paints the enclosed area upon tap
-    if (tool === 'bucket') {
-      const fillStroke = createStroke('bucket', color, size, opacity, point);
-      onStrokesChange([...strokes, fillStroke]);
-      return;
-    }
-
-    const newStroke = createStroke(tool, color, size, opacity, point);
-    currentStrokeRef.current = newStroke;
-    prevMidPointRef.current = point;
-    isDrawingRef.current = true;
-    redrawCanvas();
-  };
-
-  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawingRef.current || !currentStrokeRef.current) return;
-    e.preventDefault();
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const point = getCanvasCoordinates(
-      e.clientX,
-      e.clientY,
-      rect,
-      canvasDimensions.width,
-      canvasDimensions.height
-    );
-
-    currentStrokeRef.current.points.push(point);
-    redrawCanvas();
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawingRef.current || !currentStrokeRef.current) return;
-    e.preventDefault();
-
-    try {
-      const canvas = canvasRef.current;
-      if (canvas && canvas.hasPointerCapture(e.pointerId)) {
-        canvas.releasePointerCapture(e.pointerId);
-      }
-    } catch {
-      // ignore
-    }
-
-    isDrawingRef.current = false;
-    const completedStroke = currentStrokeRef.current;
-    currentStrokeRef.current = null;
-    prevMidPointRef.current = null;
-
-    if (completedStroke && completedStroke.points.length > 0) {
-      const smoothed = {
-        ...completedStroke,
-        points: smoothPoints(completedStroke.points),
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+      img.onload = () => {
+        if (!isSubscribed) return;
+        try {
+          const traceUrl = generateOutlineTraceDataUrl(img, { threshold: outlineDetailThreshold });
+          if (traceUrl && isSubscribed) setProcessedTraceUrl(traceUrl);
+        } catch (err) {
+          console.warn('Trace outline fallback:', err);
+        } finally {
+          if (isSubscribed) setIsProcessingOutline(false);
+        }
       };
-      onStrokesChange([...strokes, smoothed]);
-    } else {
-      redrawCanvas();
-    }
-  };
+      img.onerror = () => {
+        if (isSubscribed) {
+          setProcessedTraceUrl(null);
+          setIsProcessingOutline(false);
+        }
+      };
+      img.src = activeTemplate.mediaUrl.startsWith('data:')
+        ? activeTemplate.mediaUrl
+        : encodeURI(decodeURI(activeTemplate.mediaUrl));
 
-  const handleToggleVideoPlayback = () => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsVideoPlaying(true);
-    } else {
-      videoRef.current.pause();
-      setIsVideoPlaying(false);
-    }
-  };
+      return () => {
+        isSubscribed = false;
+      };
+    }, [activeTemplate, outlineDetailThreshold]);
 
-  // Determine CSS filter for fallback trace vs color vs grayscale
-  const getGuideFilterStyle = () => {
-    if (traceMode === 'outline' && !processedTraceUrl) {
-      return 'grayscale(100%) contrast(500%) brightness(135%)';
-    }
-    if (traceMode === 'grayscale') {
-      return 'grayscale(100%) contrast(120%)';
-    }
-    return 'none';
-  };
+    // Preload active template image
+    useEffect(() => {
+      if (!activeTemplate || !activeTemplate.mediaUrl) {
+        setLoadedTemplateImage(null);
+        return;
+      }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+      img.onload = () => setLoadedTemplateImage(img);
+      img.onerror = () => setLoadedTemplateImage(null);
+      img.src = activeTemplate.mediaUrl.startsWith('data:')
+        ? activeTemplate.mediaUrl
+        : encodeURI(decodeURI(activeTemplate.mediaUrl));
+    }, [activeTemplate]);
 
-  return (
-    <div
-      ref={containerRef}
-      className="relative w-full h-full flex flex-col items-center justify-center p-2 sm:p-4 pb-20 sm:pb-24 overflow-hidden"
-    >
-      {/* Background Studio Image */}
-      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true">
-        <img
-          src="/src/assets/images/royal_blue_white_bg_1793729884932.jpg"
-          alt=""
-          className="w-full h-full object-cover object-center opacity-45 scale-105 filter blur-[0.5px]"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-white/75 via-blue-50/60 to-blue-900/25" />
-        <div className="absolute top-1/4 -left-20 w-80 h-80 rounded-full bg-blue-600/20 blur-[100px]" />
-        <div className="absolute bottom-1/4 -right-20 w-96 h-96 rounded-full bg-[#164BCE]/25 blur-[120px]" />
-      </div>
+    const drawStroke = useCallback((ctx: CanvasRenderingContext2D, stroke: Stroke) => {
+      renderStrokeToContext(ctx, stroke, 'canvas');
+    }, []);
 
-      {/* Canvas Frame Wrapper: Floating White Drawing Board */}
-      <div className="relative z-10 max-w-full max-h-full flex items-center justify-center shadow-[0_20px_60px_rgba(22,75,206,0.22),0_0_35px_rgba(37,99,235,0.18)] rounded-2xl sm:rounded-3xl p-2 bg-gradient-to-b from-white via-blue-50/80 to-blue-100/60 border-2 border-blue-400/50">
-        {/* Floating Tracing Control HUD */}
+    // Rebuild base composite whenever committed strokes or dimensions change
+    const rebuildBaseComposite = useCallback(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      if (!strokesCanvasRef.current) {
+        strokesCanvasRef.current = document.createElement('canvas');
+      }
+      const strokesCanvas = strokesCanvasRef.current;
+      if (strokesCanvas.width !== canvas.width || strokesCanvas.height !== canvas.height) {
+        strokesCanvas.width = canvas.width;
+        strokesCanvas.height = canvas.height;
+      }
+      const strokesCtx = strokesCanvas.getContext('2d');
+      if (!strokesCtx) return;
+
+      // Ensure any raster patch images trigger a clean repaint once decoded
+      for (const stroke of strokes) {
+        if ((stroke.operation === 'paste-image' || stroke.operation === 'replace-bitmap') && stroke.rasterDataUrl) {
+          const cached = preloadStrokeRasterImage(stroke.rasterDataUrl, () => {
+            requestAnimationFrame(() => rebuildBaseComposite());
+          });
+          if (!cached) {
+            // image still decoding async
+          }
+        }
+      }
+
+      strokesCtx.clearRect(0, 0, strokesCanvas.width, strokesCanvas.height);
+      for (const stroke of strokes) {
+        drawStroke(strokesCtx, stroke);
+      }
+
+      if (!baseCompositeCanvasRef.current) {
+        baseCompositeCanvasRef.current = document.createElement('canvas');
+      }
+      const baseCanvas = baseCompositeCanvasRef.current;
+      if (baseCanvas.width !== canvas.width || baseCanvas.height !== canvas.height) {
+        baseCanvas.width = canvas.width;
+        baseCanvas.height = canvas.height;
+      }
+      const baseCtx = baseCanvas.getContext('2d');
+      if (!baseCtx) return;
+
+      baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+      baseCtx.fillStyle = '#FFFFFF';
+      baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
+
+      if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
+        const imgW = loadedTemplateImage.naturalWidth || loadedTemplateImage.width || baseCanvas.width;
+        const imgH = loadedTemplateImage.naturalHeight || loadedTemplateImage.height || baseCanvas.height;
+        const drawRect = getContainDrawRect(imgW, imgH, baseCanvas.width, baseCanvas.height);
+        baseCtx.save();
+        baseCtx.globalAlpha = Math.max(0.35, templateOpacity);
+        baseCtx.drawImage(loadedTemplateImage, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
+        baseCtx.restore();
+      }
+
+      baseCtx.save();
+      baseCtx.globalCompositeOperation = 'source-over';
+      baseCtx.drawImage(strokesCanvas, 0, 0);
+      baseCtx.restore();
+
+      if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
+        const imgW = loadedTemplateImage.naturalWidth || loadedTemplateImage.width || baseCanvas.width;
+        const imgH = loadedTemplateImage.naturalHeight || loadedTemplateImage.height || baseCanvas.height;
+        const drawRect = getContainDrawRect(imgW, imgH, baseCanvas.width, baseCanvas.height);
+        baseCtx.save();
+        baseCtx.globalCompositeOperation = 'multiply';
+        baseCtx.globalAlpha = Math.min(1.0, templateOpacity * 1.25);
+        baseCtx.drawImage(loadedTemplateImage, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
+        baseCtx.restore();
+      }
+
+      const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(baseCanvas, 0, 0);
+      }
+    }, [strokes, activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, canvasDimensions, drawStroke]);
+
+    useEffect(() => {
+      rebuildBaseComposite();
+    }, [strokes, canvasDimensions, rebuildBaseComposite]);
+
+    // Real-time active stroke preview (with live jitter smoothing + live Mirror mode!)
+    const renderActiveStroke = useCallback(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
+      if (!ctx) return;
+
+      const baseCanvas = baseCompositeCanvasRef.current;
+      const currentStroke = currentStrokeRef.current;
+      const floating = floatingSelectionImgRef.current;
+
+      if (!currentStroke && !floating) {
+        if (baseCanvas) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(baseCanvas, 0, 0);
+        }
+        return;
+      }
+
+      if (floating && baseCanvas) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(baseCanvas, 0, 0);
+        ctx.save();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(floating.origRect.x, floating.origRect.y, floating.origRect.width, floating.origRect.height);
+        if (floating.img && floating.img.complete) {
+          ctx.drawImage(
+            floating.img,
+            floating.origRect.x + floating.offsetX,
+            floating.origRect.y + floating.offsetY,
+            floating.origRect.width,
+            floating.origRect.height
+          );
+        }
+        ctx.restore();
+        return;
+      }
+
+      if (!currentStroke) return;
+
+      // Apply live light smoothing on freehand tools so preview matches final silky output
+      const previewStroke: Stroke =
+        currentStroke.tool !== 'shape' &&
+        currentStroke.tool !== 'text' &&
+        currentStroke.tool !== 'select' &&
+        currentStroke.points.length >= 4
+          ? {
+              ...currentStroke,
+              points: smoothStrokePoints(currentStroke.points, { passes: 1, subdivide: false }),
+            }
+          : currentStroke;
+
+      const activeStrokes = createMirroredStrokes(
+        previewStroke,
+        symmetryMode,
+        canvas.width,
+        canvas.height
+      );
+
+      if (previewStroke.tool === 'eraser') {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
+          const imgW = loadedTemplateImage.naturalWidth || loadedTemplateImage.width || canvas.width;
+          const imgH = loadedTemplateImage.naturalHeight || loadedTemplateImage.height || canvas.height;
+          const drawRect = getContainDrawRect(imgW, imgH, canvas.width, canvas.height);
+          ctx.save();
+          ctx.globalAlpha = Math.max(0.35, templateOpacity);
+          ctx.drawImage(loadedTemplateImage, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
+          ctx.restore();
+        }
+
+        if (strokesCanvasRef.current) {
+          ctx.save();
+          ctx.drawImage(strokesCanvasRef.current, 0, 0);
+          for (const strokeVariant of activeStrokes) {
+            drawStroke(ctx, strokeVariant);
+          }
+          ctx.restore();
+        }
+      } else {
+        if (baseCanvas) {
+          ctx.drawImage(baseCanvas, 0, 0);
+        }
+        for (const strokeVariant of activeStrokes) {
+          drawStroke(ctx, strokeVariant);
+        }
+      }
+    }, [activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, symmetryMode, drawStroke]);
+
+    // Capture a raster dataUrl of the user canvas + white paper for selection/crop/rotate ops
+    const captureCompositeRegion = useCallback(
+      (rect?: RectBounds): string | null => {
+        const strokesCanvas = strokesCanvasRef.current;
+        const w = canvasDimensions.width;
+        const h = canvasDimensions.height;
+        const targetRect = rect || { x: 0, y: 0, width: w, height: h };
+
+        if (targetRect.width < 1 || targetRect.height < 1) return null;
+
+        const out = document.createElement('canvas');
+        out.width = Math.round(targetRect.width);
+        out.height = Math.round(targetRect.height);
+        const octx = out.getContext('2d');
+        if (!octx) return null;
+
+        octx.fillStyle = '#FFFFFF';
+        octx.fillRect(0, 0, out.width, out.height);
+        if (strokesCanvas) {
+          octx.drawImage(
+            strokesCanvas,
+            targetRect.x,
+            targetRect.y,
+            targetRect.width,
+            targetRect.height,
+            0,
+            0,
+            out.width,
+            out.height
+          );
+        }
+        return out.toDataURL('image/png');
+      },
+      [canvasDimensions]
+    );
+
+    // Imperative Clipboard, Selection, Crop, Rotate/Flip actions called by PaintRibbon
+    useImperativeHandle(
+      ref,
+      () => ({
+        getCanPaste: () => Boolean(clipboardRasterRef.current),
+        selectAll: () => {
+          setSelectionRect({ x: 0, y: 0, width: canvasDimensions.width, height: canvasDimensions.height });
+        },
+        clearSelection: () => {
+          setSelectionRect(null);
+        },
+        deleteSelection: () => {
+          if (!selectionRect) return;
+          const eraseOp: Stroke = {
+            id: `op_del_${Date.now()}`,
+            tool: 'eraser',
+            color: secondaryColor,
+            fillColor: secondaryColor,
+            size: 1,
+            opacity: 1,
+            points: [],
+            operation: 'erase-rect',
+            rect: { ...selectionRect },
+          };
+          onStrokesChange([...strokes, eraseOp]);
+          setSelectionRect(null);
+        },
+        copySelection: async () => {
+          const target =
+            selectionRect && selectionRect.width >= 2 && selectionRect.height >= 2
+              ? selectionRect
+              : { x: 0, y: 0, width: canvasDimensions.width, height: canvasDimensions.height };
+          const dataUrl = captureCompositeRegion(target);
+          if (!dataUrl) return;
+          clipboardRasterRef.current = {
+            dataUrl,
+            width: Math.round(target.width),
+            height: Math.round(target.height),
+          };
+          preloadStrokeRasterImage(dataUrl);
+          onClipboardChange?.(true);
+          onNotify?.(
+            selectionRect
+              ? `Copied ${Math.round(target.width)}×${Math.round(target.height)}px selection`
+              : 'Copied canvas image'
+          );
+        },
+        cutSelection: () => {
+          if (!selectionRect || selectionRect.width < 2 || selectionRect.height < 2) return;
+          const dataUrl = captureCompositeRegion(selectionRect);
+          if (!dataUrl) return;
+          clipboardRasterRef.current = {
+            dataUrl,
+            width: Math.round(selectionRect.width),
+            height: Math.round(selectionRect.height),
+          };
+          preloadStrokeRasterImage(dataUrl);
+          onClipboardChange?.(true);
+          const eraseOp: Stroke = {
+            id: `op_cut_${Date.now()}`,
+            tool: 'eraser',
+            color: secondaryColor,
+            fillColor: secondaryColor,
+            size: 1,
+            opacity: 1,
+            points: [],
+            operation: 'erase-rect',
+            rect: { ...selectionRect },
+          };
+          onStrokesChange([...strokes, eraseOp]);
+          setSelectionRect(null);
+          onNotify?.('Cut selection to clipboard');
+        },
+        pasteClipboard: () => {
+          const clip = clipboardRasterRef.current;
+          if (!clip) {
+            onNotify?.('Clipboard is empty — Copy a selection first');
+            return;
+          }
+          const pasteRect: RectBounds = { x: 12, y: 12, width: clip.width, height: clip.height };
+          preloadStrokeRasterImage(clip.dataUrl, () => rebuildBaseComposite());
+          const pasteOp: Stroke = {
+            id: `op_paste_${Date.now()}`,
+            tool: 'select',
+            color: '#000000',
+            size: 1,
+            opacity: 1,
+            points: [],
+            operation: 'paste-image',
+            rect: pasteRect,
+            rasterDataUrl: clip.dataUrl,
+          };
+          onStrokesChange([...strokes, pasteOp]);
+          setSelectionRect(pasteRect);
+          onNotify?.('Pasted from clipboard');
+        },
+        cropToSelection: () => {
+          if (!selectionRect || selectionRect.width < 4 || selectionRect.height < 4) return;
+          const dataUrl = captureCompositeRegion(selectionRect);
+          if (!dataUrl) return;
+          const nextW = Math.max(20, Math.round(selectionRect.width));
+          const nextH = Math.max(20, Math.round(selectionRect.height));
+          preloadStrokeRasterImage(dataUrl, () => rebuildBaseComposite());
+          const cropOp: Stroke = {
+            id: `op_crop_${Date.now()}`,
+            tool: 'select',
+            color: '#000000',
+            size: 1,
+            opacity: 1,
+            points: [],
+            operation: 'replace-bitmap',
+            rect: { x: 0, y: 0, width: nextW, height: nextH },
+            rasterDataUrl: dataUrl,
+          };
+          onCanvasDimensionsChange({ width: nextW, height: nextH });
+          onStrokesChange([cropOp]);
+          setSelectionRect(null);
+          onNotify?.(`Cropped canvas to ${nextW}×${nextH}px`);
+        },
+        rotateOrFlip: (action) => {
+          const targetRect =
+            selectionRect && selectionRect.width >= 4 && selectionRect.height >= 4
+              ? selectionRect
+              : { x: 0, y: 0, width: canvasDimensions.width, height: canvasDimensions.height };
+          const srcUrl = captureCompositeRegion(targetRect);
+          if (!srcUrl) return;
+
+          const img = new Image();
+          img.onload = () => {
+            const swapDims = action === 'cw90' || action === 'ccw90';
+            const outW = swapDims ? img.height : img.width;
+            const outH = swapDims ? img.width : img.height;
+            const tmp = document.createElement('canvas');
+            tmp.width = outW;
+            tmp.height = outH;
+            const tctx = tmp.getContext('2d');
+            if (!tctx) return;
+
+            tctx.save();
+            tctx.translate(outW / 2, outH / 2);
+            if (action === 'cw90') tctx.rotate(Math.PI / 2);
+            else if (action === 'ccw90') tctx.rotate(-Math.PI / 2);
+            else if (action === '180') tctx.rotate(Math.PI);
+            else if (action === 'flipH') tctx.scale(-1, 1);
+            else if (action === 'flipV') tctx.scale(1, -1);
+            tctx.drawImage(img, -img.width / 2, -img.height / 2);
+            tctx.restore();
+
+            const transformedUrl = tmp.toDataURL('image/png');
+            preloadStrokeRasterImage(transformedUrl, () => rebuildBaseComposite());
+
+            if (selectionRect && selectionRect.width >= 4 && selectionRect.height >= 4) {
+              const eraseOld: Stroke = {
+                id: `op_rot_clr_${Date.now()}`,
+                tool: 'eraser',
+                color: secondaryColor,
+                fillColor: secondaryColor,
+                size: 1,
+                opacity: 1,
+                points: [],
+                operation: 'erase-rect',
+                rect: { ...targetRect },
+              };
+              const nextRect: RectBounds = {
+                x: targetRect.x,
+                y: targetRect.y,
+                width: outW,
+                height: outH,
+              };
+              const pasteTransformed: Stroke = {
+                id: `op_rot_pst_${Date.now()}`,
+                tool: 'select',
+                color: '#000000',
+                size: 1,
+                opacity: 1,
+                points: [],
+                operation: 'paste-image',
+                rect: nextRect,
+                rasterDataUrl: transformedUrl,
+              };
+              onStrokesChange([...strokes, eraseOld, pasteTransformed]);
+              setSelectionRect(nextRect);
+            } else {
+              if (swapDims) {
+                onCanvasDimensionsChange({ width: outW, height: outH });
+              }
+              const replaceWhole: Stroke = {
+                id: `op_rot_full_${Date.now()}`,
+                tool: 'select',
+                color: '#000000',
+                size: 1,
+                opacity: 1,
+                points: [],
+                operation: 'replace-bitmap',
+                rect: { x: 0, y: 0, width: outW, height: outH },
+                rasterDataUrl: transformedUrl,
+              };
+              onStrokesChange([...strokes, replaceWhole]);
+            }
+          };
+          img.src = srcUrl;
+        },
+      }),
+      [
+        canvasDimensions,
+        selectionRect,
+        strokes,
+        secondaryColor,
+        captureCompositeRegion,
+        onStrokesChange,
+        onCanvasDimensionsChange,
+        onClipboardChange,
+        onNotify,
+        rebuildBaseComposite,
+      ]
+    );
+
+    // Commit active inline Text annotation
+    const commitTextAnnotation = useCallback(() => {
+      if (!activeTextBox) return;
+      const trimmed = activeTextBox.text.trimEnd();
+      if (trimmed.length > 0) {
+        const fontSize = Math.max(14, Math.round(size * 2.4));
+        const textStroke: Stroke = {
+          id: `stroke_txt_${Date.now()}`,
+          tool: 'text',
+          color,
+          size,
+          opacity,
+          points: [{ x: activeTextBox.x, y: activeTextBox.y }],
+          text: trimmed,
+          fontSize,
+          fontFamily: '"Segoe UI", Arial, sans-serif',
+        };
+        onStrokesChange([...strokes, textStroke]);
+      }
+      setActiveTextBox(null);
+    }, [activeTextBox, color, size, opacity, strokes, onStrokesChange]);
+
+    // Auto-commit pending text or polygon when switching tools
+    useEffect(() => {
+      if (tool !== 'text' && activeTextBox) {
+        commitTextAnnotation();
+      }
+      if ((tool !== 'shape' || shapeType !== 'polygon') && polygonDraftRef.current) {
+        if (polygonDraftRef.current.points.length >= 2) {
+          onStrokesChange([...strokes, polygonDraftRef.current]);
+        }
+        polygonDraftRef.current = null;
+        currentStrokeRef.current = null;
+        rebuildBaseComposite();
+      }
+      if ((tool !== 'shape' || shapeType !== 'curve') && curveStageRef.current) {
+        onStrokesChange([...strokes, curveStageRef.current.stroke]);
+        curveStageRef.current = null;
+        currentStrokeRef.current = null;
+      }
+      if (tool !== 'select' && selectionRect) {
+        // Keep selectionRect until cleared or switched only if desired; Windows Paint clears selection on drawing tool pick
+        setSelectionRect(null);
+      }
+    }, [tool, shapeType]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Cancel active stroke when 2nd touch enters for pinch/pan
+    const cancelActiveStrokeForGesture = useCallback(() => {
+      if (isDrawingRef.current) {
+        if (activeRafIdRef.current) {
+          cancelAnimationFrame(activeRafIdRef.current);
+          activeRafIdRef.current = null;
+        }
+        isDrawingRef.current = false;
+        currentStrokeRef.current = null;
+        canvasRectRef.current = null;
+        const canvas = canvasRef.current;
+        const base = baseCompositeCanvasRef.current;
+        if (canvas && base) {
+          const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(base, 0, 0);
+          }
+        }
+      }
+    }, []);
+
+    // Multi-touch Pinch-to-Zoom & 2-Finger Scroll Panning on workspace
+    const beginPinchAnchor = useCallback(
+      (p1: { clientX: number; clientY: number }, p2: { clientX: number; clientY: number }) => {
+        const { distance, center } = getPointerPairMetrics(p1, p2);
+        isPinchingRef.current = true;
+        suppressDrawingUntilAllUpRef.current = true;
+        pinchStartDistRef.current = distance > 0 ? distance : 1;
+        pinchStartZoomRef.current = latestZoomRef.current;
+        pinchStartCenterRef.current = center;
+        pinchStartScrollRef.current = {
+          left: workspaceRef.current?.scrollLeft ?? 0,
+          top: workspaceRef.current?.scrollTop ?? 0,
+        };
+      },
+      []
+    );
+
+    const applyPinchPair = useCallback(
+      (p1: { clientX: number; clientY: number }, p2: { clientX: number; clientY: number }) => {
+        const ws = workspaceRef.current;
+        if (!ws) return;
+        const rect = ws.getBoundingClientRect();
+        const { distance, center } = getPointerPairMetrics(p1, p2);
+        const { zoomLevel: nextZoom } = calculatePinchZoomAndPan({
+          startDistance: pinchStartDistRef.current,
+          currentDistance: distance,
+          startZoom: pinchStartZoomRef.current,
+          startPan: { x: 0, y: 0 },
+          startCenter: pinchStartCenterRef.current,
+          currentCenter: center,
+          viewportCenter: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+          containerWidth: rect.width,
+          containerHeight: rect.height,
+        });
+        setZoomLevel(nextZoom);
+        const dx = center.x - pinchStartCenterRef.current.x;
+        const dy = center.y - pinchStartCenterRef.current.y;
+        ws.scrollLeft = Math.max(0, pinchStartScrollRef.current.left - dx);
+        ws.scrollTop = Math.max(0, pinchStartScrollRef.current.top - dy);
+      },
+      [setZoomLevel]
+    );
+
+    const handleWorkspacePointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest('[data-canvas-hud="true"]')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+      activePointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+      if (activePointersRef.current.size >= 2) {
+        cancelActiveStrokeForGesture();
+        const [p1, p2] = Array.from(activePointersRef.current.values());
+        beginPinchAnchor(p1, p2);
+      }
+    };
+
+    const handleWorkspacePointerMoveCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!activePointersRef.current.has(e.pointerId)) return;
+      activePointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+      if (isPinchingRef.current && activePointersRef.current.size >= 2) {
+        const [p1, p2] = Array.from(activePointersRef.current.values());
+        applyPinchPair(p1, p2);
+      }
+    };
+
+    const handleWorkspacePointerEndCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!activePointersRef.current.has(e.pointerId)) return;
+      activePointersRef.current.delete(e.pointerId);
+      if (activePointersRef.current.size >= 2) {
+        const [p1, p2] = Array.from(activePointersRef.current.values());
+        beginPinchAnchor(p1, p2);
+      } else if (activePointersRef.current.size === 1) {
+        if (isPinchingRef.current) isPinchingRef.current = false;
+      } else {
+        isPinchingRef.current = false;
+        suppressDrawingUntilAllUpRef.current = false;
+      }
+    };
+
+    // Wheel Ctrl+Scroll zoom support
+    useEffect(() => {
+      const ws = workspaceRef.current;
+      if (!ws) return;
+
+      const handleWheel = (e: WheelEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const rect = ws.getBoundingClientRect();
+          const delta = e.deltaY < 0 ? 0.12 : -0.12;
+          const { zoomLevel: nextZoom } = calculateWheelZoomAndPan({
+            currentZoom: latestZoomRef.current,
+            currentPan: { x: 0, y: 0 },
+            zoomDelta: delta,
+            cursor: { x: e.clientX, y: e.clientY },
+            viewportCenter: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+            containerWidth: rect.width,
+            containerHeight: rect.height,
+          });
+          setZoomLevel(nextZoom);
+        }
+      };
+
+      const handleNativeTouchStart = (e: TouchEvent) => {
+        if ((e.target as HTMLElement)?.closest('[data-canvas-hud="true"]')) return;
+        if (e.touches.length >= 2) {
+          e.preventDefault();
+          cancelActiveStrokeForGesture();
+          if (!isPinchingRef.current) beginPinchAnchor(e.touches[0], e.touches[1]);
+        }
+      };
+
+      const handleNativeTouchMove = (e: TouchEvent) => {
+        if (e.touches.length >= 2) {
+          e.preventDefault();
+          if (!isPinchingRef.current) {
+            cancelActiveStrokeForGesture();
+            beginPinchAnchor(e.touches[0], e.touches[1]);
+          } else if (activePointersRef.current.size < 2) {
+            applyPinchPair(e.touches[0], e.touches[1]);
+          }
+        }
+      };
+
+      const handleNativeTouchEnd = (e: TouchEvent) => {
+        if (e.touches.length === 0) {
+          isPinchingRef.current = false;
+          suppressDrawingUntilAllUpRef.current = false;
+          activePointersRef.current.clear();
+        }
+      };
+
+      ws.addEventListener('wheel', handleWheel, { passive: false });
+      ws.addEventListener('touchstart', handleNativeTouchStart, { passive: false });
+      ws.addEventListener('touchmove', handleNativeTouchMove, { passive: false });
+      ws.addEventListener('touchend', handleNativeTouchEnd, { passive: true });
+      ws.addEventListener('touchcancel', handleNativeTouchEnd, { passive: true });
+
+      return () => {
+        ws.removeEventListener('wheel', handleWheel);
+        ws.removeEventListener('touchstart', handleNativeTouchStart);
+        ws.removeEventListener('touchmove', handleNativeTouchMove);
+        ws.removeEventListener('touchend', handleNativeTouchEnd);
+        ws.removeEventListener('touchcancel', handleNativeTouchEnd);
+      };
+    }, [applyPinchPair, beginPinchAnchor, cancelActiveStrokeForGesture, setZoomLevel]);
+
+    // Interactive Canvas Edge Resize Handles (Right edge, Bottom edge, Corner)
+    const startSheetResize = (
+      mode: 'right' | 'bottom' | 'corner',
+      e: React.PointerEvent<HTMLDivElement>
+    ) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = canvasDimensions.width;
+      const startH = canvasDimensions.height;
+      const z = Math.max(0.25, zoomLevel);
+
+      let latestW = startW;
+      let latestH = startH;
+
+      const onMove = (ev: PointerEvent) => {
+        const dx = Math.round((ev.clientX - startX) / z);
+        const dy = Math.round((ev.clientY - startY) / z);
+        latestW = mode === 'right' || mode === 'corner' ? Math.max(100, Math.min(4096, startW + dx)) : startW;
+        latestH = mode === 'bottom' || mode === 'corner' ? Math.max(100, Math.min(4096, startH + dy)) : startH;
+        setResizingPreview({ width: latestW, height: latestH });
+      };
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        setResizingPreview(null);
+        if (latestW !== startW || latestH !== startH) {
+          onCanvasDimensionsChange({ width: latestW, height: latestH });
+        }
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
+    // Main Canvas Pointer Handlers
+    const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (isPinchingRef.current || suppressDrawingUntilAllUpRef.current || activePointersRef.current.size > 1) return;
+      if (!e.isPrimary && e.pointerType === 'touch') return;
+      e.preventDefault();
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      canvasRectRef.current = rect;
+
+      const pt = getCanvasCoordinates(
+        e.clientX,
+        e.clientY,
+        rect,
+        canvasDimensions.width,
+        canvasDimensions.height
+      );
+      const isRightClick = e.button === 2;
+      const activeStrokeColor = isRightClick ? secondaryColor : color;
+      const activeShapeFillColor = isRightClick ? color : secondaryColor;
+
+      // Notify parent App (auto-hides unpinned Ribbon cleanly)
+      onCanvasStrokeStart?.();
+
+      // 1. MAGNIFIER TOOL
+      if (tool === 'magnifier') {
+        if (isRightClick || e.altKey) {
+          setZoomLevel((z) => Math.max(0.25, Math.round((z - 0.25) * 100) / 100));
+        } else {
+          setZoomLevel((z) => Math.min(4.0, Math.round((z + 0.25) * 100) / 100));
+        }
+        return;
+      }
+
+      // 2. COLOR PICKER (EYEDROPPER) TOOL
+      if (tool === 'picker') {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          const px = Math.max(0, Math.min(canvas.width - 1, Math.floor(pt.x)));
+          const py = Math.max(0, Math.min(canvas.height - 1, Math.floor(pt.y)));
+          const data = ctx.getImageData(px, py, 1, 1).data;
+          const sampledHex = rgbToHex(data[0], data[1], data[2]);
+          if (isRightClick) {
+            onSecondaryColorChange?.(sampledHex);
+            onNotify?.(`Color 2 set to ${sampledHex}`);
+          } else {
+            onColorChange?.(sampledHex);
+            onNotify?.(`Color 1 set to ${sampledHex}`);
+          }
+          onPickedColorComplete?.();
+        }
+        return;
+      }
+
+      // 3. TEXT TOOL
+      if (tool === 'text') {
+        if (activeTextBox) {
+          commitTextAnnotation();
+        }
+        setActiveTextBox({
+          x: Math.round(pt.x),
+          y: Math.round(pt.y),
+          text: '',
+        });
+        setTimeout(() => textInputRef.current?.focus(), 20);
+        return;
+      }
+
+      // 4. SELECTION TOOL
+      if (tool === 'select') {
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {}
+
+        // If user clicked INSIDE an existing selection box -> lift & drag-move selection!
+        if (
+          selectionRect &&
+          selectionRect.width >= 4 &&
+          selectionRect.height >= 4 &&
+          pt.x >= selectionRect.x &&
+          pt.x <= selectionRect.x + selectionRect.width &&
+          pt.y >= selectionRect.y &&
+          pt.y <= selectionRect.y + selectionRect.height
+        ) {
+          const captured = captureCompositeRegion(selectionRect);
+          if (captured) {
+            const img = new Image();
+            img.src = captured;
+            floatingSelectionImgRef.current = {
+              dataUrl: captured,
+              img,
+              origRect: { ...selectionRect },
+              offsetX: 0,
+              offsetY: 0,
+            };
+            isMovingSelectionRef.current = true;
+            moveOriginRectRef.current = { ...selectionRect };
+            moveStartPointRef.current = pt;
+            isDrawingRef.current = true;
+            return;
+          }
+        }
+
+        // Start drawing a fresh selection rectangle
+        setSelectionRect({ x: pt.x, y: pt.y, width: 0, height: 0 });
+        selectionDragStartRef.current = pt;
+        isMovingSelectionRef.current = false;
+        isDrawingRef.current = true;
+        return;
+      }
+
+      // 5. PAINT BUCKET FLOOD FILL
+      if (tool === 'bucket') {
+        const fillStroke = createStroke(
+          'bucket',
+          activeStrokeColor,
+          size,
+          opacity,
+          pt,
+          colorEnd || undefined,
+          paintFinish
+        );
+        const fillStrokes = createMirroredStrokes(
+          fillStroke,
+          symmetryMode,
+          canvasDimensions.width,
+          canvasDimensions.height
+        );
+        onStrokesChange([...strokes, ...fillStrokes]);
+        return;
+      }
+
+      // 6. SHAPE TOOL (Curve, Polygon, and standard click-and-drag Shapes)
+      if (tool === 'shape') {
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {}
+
+        // 6a. Multi-stage Curve tool
+        if (shapeType === 'curve' && curveStageRef.current) {
+          const stage = curveStageRef.current;
+          if (stage.clicksLeft === 2) {
+            stage.stroke.points[2] = pt;
+            stage.stroke.points[3] = pt;
+          } else {
+            stage.stroke.points[3] = pt;
+          }
+          currentStrokeRef.current = stage.stroke;
+          isDrawingRef.current = true;
+          renderActiveStroke();
+          return;
+        }
+
+        // 6b. Multi-vertex Polygon tool
+        if (shapeType === 'polygon') {
+          if (!polygonDraftRef.current) {
+            polygonDraftRef.current = {
+              id: `stroke_poly_${Date.now()}`,
+              tool: 'shape',
+              shapeType: 'polygon',
+              outlineStyle,
+              fillStyle,
+              color: activeStrokeColor,
+              fillColor: activeShapeFillColor,
+              size,
+              opacity,
+              points: [pt, pt],
+            };
+          } else {
+            const firstPt = polygonDraftRef.current.points[0];
+            if (polygonDraftRef.current.points.length >= 3 && Math.hypot(pt.x - firstPt.x, pt.y - firstPt.y) <= 12) {
+              // Snap closed polygon and commit!
+              const finalized = {
+                ...polygonDraftRef.current,
+                points: polygonDraftRef.current.points.slice(0, -1),
+              };
+              const finalStrokes = createMirroredStrokes(
+                finalized,
+                symmetryMode,
+                canvasDimensions.width,
+                canvasDimensions.height
+              );
+              polygonDraftRef.current = null;
+              currentStrokeRef.current = null;
+              onStrokesChange([...strokes, ...finalStrokes]);
+              return;
+            }
+            polygonDraftRef.current.points.push(pt);
+          }
+          currentStrokeRef.current = polygonDraftRef.current;
+          isDrawingRef.current = true;
+          renderActiveStroke();
+          return;
+        }
+
+        // 6c. Standard click-and-drag shape
+        const newShapeStroke: Stroke = {
+          id: `stroke_shp_${Date.now()}`,
+          tool: 'shape',
+          shapeType,
+          outlineStyle,
+          fillStyle,
+          color: activeStrokeColor,
+          fillColor: activeShapeFillColor,
+          size,
+          opacity,
+          points: [pt, pt],
+        };
+        currentStrokeRef.current = newShapeStroke;
+        isDrawingRef.current = true;
+        renderActiveStroke();
+        return;
+      }
+
+      // 7. FREEHAND BRUSH / PENCIL / PEN / ERASER with Real-Time Stroke Stabilization!
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {}
+
+      const pressure = typeof e.nativeEvent.pressure === 'number' && e.nativeEvent.pressure > 0 ? e.nativeEvent.pressure : 0.5;
+      const firstPt: Point = { ...pt, pressure };
+      const newStroke = createStroke(
+        tool,
+        activeStrokeColor,
+        size,
+        opacity,
+        firstPt,
+        colorEnd || undefined,
+        paintFinish
+      );
+      currentStrokeRef.current = newStroke;
+      isDrawingRef.current = true;
+      renderActiveStroke();
+    };
+
+    const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvasRectRef.current || canvas.getBoundingClientRect();
+      const hoverPt = getCanvasCoordinates(
+        e.clientX,
+        e.clientY,
+        rect,
+        canvasDimensions.width,
+        canvasDimensions.height
+      );
+      onCursorPositionChange?.({ x: hoverPt.x, y: hoverPt.y });
+
+      if (isPinchingRef.current || suppressDrawingUntilAllUpRef.current || activePointersRef.current.size > 1) return;
+      if (!isDrawingRef.current) return;
+      e.preventDefault();
+
+      // Dragging or creating Selection
+      if (tool === 'select') {
+        if (isMovingSelectionRef.current && floatingSelectionImgRef.current && moveStartPointRef.current && moveOriginRectRef.current) {
+          const dx = Math.round(hoverPt.x - moveStartPointRef.current.x);
+          const dy = Math.round(hoverPt.y - moveStartPointRef.current.y);
+          floatingSelectionImgRef.current.offsetX = dx;
+          floatingSelectionImgRef.current.offsetY = dy;
+          setSelectionRect({
+            x: moveOriginRectRef.current.x + dx,
+            y: moveOriginRectRef.current.y + dy,
+            width: moveOriginRectRef.current.width,
+            height: moveOriginRectRef.current.height,
+          });
+          renderActiveStroke();
+        } else if (selectionDragStartRef.current) {
+          const sx = selectionDragStartRef.current.x;
+          const sy = selectionDragStartRef.current.y;
+          setSelectionRect({
+            x: Math.round(Math.min(sx, hoverPt.x)),
+            y: Math.round(Math.min(sy, hoverPt.y)),
+            width: Math.round(Math.abs(hoverPt.x - sx)),
+            height: Math.round(Math.abs(hoverPt.y - sy)),
+          });
+        }
+        return;
+      }
+
+      if (!currentStrokeRef.current) return;
+
+      // Dragging Shape
+      if (tool === 'shape') {
+        const st = currentStrokeRef.current;
+        if (curveStageRef.current && st.shapeType === 'curve') {
+          if (curveStageRef.current.clicksLeft === 2) {
+            st.points[2] = hoverPt;
+            st.points[3] = hoverPt;
+          } else {
+            st.points[3] = hoverPt;
+          }
+        } else {
+          st.points[st.points.length - 1] = hoverPt;
+          const p0 = st.points[0];
+          onSelectionSizeChange?.({
+            width: Math.round(Math.abs(hoverPt.x - p0.x)),
+            height: Math.round(Math.abs(hoverPt.y - p0.y)),
+          });
+        }
+
+        if (!activeRafIdRef.current) {
+          activeRafIdRef.current = requestAnimationFrame(() => {
+            activeRafIdRef.current = null;
+            renderActiveStroke();
+          });
+        }
+        return;
+      }
+
+      // Freehand tools: High-precision coalesced points fed through live EMA Jitter Stabilizer
+      canvasRectRef.current = rect;
+      const rawEvents = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() || [e.nativeEvent];
+      const points = currentStrokeRef.current.points;
+
+      for (const ev of rawEvents) {
+        const pt = getCanvasCoordinates(
+          ev.clientX,
+          ev.clientY,
+          rect,
+          canvasDimensions.width,
+          canvasDimensions.height
+        );
+        const pressure = typeof ev.pressure === 'number' && ev.pressure > 0 ? ev.pressure : 0.5;
+        const last = points[points.length - 1];
+        if (!last) {
+          points.push({ ...pt, pressure });
+        } else {
+          const stabilized = stabilizePointerPoint(last, { ...pt, pressure }, 0.45, 1.2);
+          if (stabilized) {
+            points.push(stabilized);
+          }
+        }
+      }
+
+      if (!activeRafIdRef.current) {
+        activeRafIdRef.current = requestAnimationFrame(() => {
+          activeRafIdRef.current = null;
+          renderActiveStroke();
+        });
+      }
+    };
+
+    const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!isDrawingRef.current) return;
+      e.preventDefault();
+
+      if (activeRafIdRef.current) {
+        cancelAnimationFrame(activeRafIdRef.current);
+        activeRafIdRef.current = null;
+      }
+
+      try {
+        const canvas = canvasRef.current;
+        if (canvas && canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId);
+        }
+      } catch {}
+
+      isDrawingRef.current = false;
+      canvasRectRef.current = null;
+
+      // Finish Selection draw or drag-move
+      if (tool === 'select') {
+        selectionDragStartRef.current = null;
+        if (isMovingSelectionRef.current && floatingSelectionImgRef.current) {
+          const fl = floatingSelectionImgRef.current;
+          floatingSelectionImgRef.current = null;
+          isMovingSelectionRef.current = false;
+          if (fl.offsetX !== 0 || fl.offsetY !== 0) {
+            const destRect: RectBounds = {
+              x: fl.origRect.x + fl.offsetX,
+              y: fl.origRect.y + fl.offsetY,
+              width: fl.origRect.width,
+              height: fl.origRect.height,
+            };
+            preloadStrokeRasterImage(fl.dataUrl, () => rebuildBaseComposite());
+            const clearOrig: Stroke = {
+              id: `op_mv_clr_${Date.now()}`,
+              tool: 'eraser',
+              color: secondaryColor,
+              fillColor: secondaryColor,
+              size: 1,
+              opacity: 1,
+              points: [],
+              operation: 'erase-rect',
+              rect: { ...fl.origRect },
+            };
+            const pasteDest: Stroke = {
+              id: `op_mv_pst_${Date.now()}`,
+              tool: 'select',
+              color: '#000000',
+              size: 1,
+              opacity: 1,
+              points: [],
+              operation: 'paste-image',
+              rect: destRect,
+              rasterDataUrl: fl.dataUrl,
+            };
+            onStrokesChange([...strokes, clearOrig, pasteDest]);
+          } else {
+            rebuildBaseComposite();
+          }
+        } else if (selectionRect && (selectionRect.width < 3 || selectionRect.height < 3)) {
+          setSelectionRect(null);
+        }
+        return;
+      }
+
+      const completedStroke = currentStrokeRef.current;
+      if (!completedStroke || completedStroke.points.length === 0) {
+        currentStrokeRef.current = null;
+        rebuildBaseComposite();
+        return;
+      }
+
+      // Curve 2-bend stage handling
+      if (completedStroke.tool === 'shape' && completedStroke.shapeType === 'curve') {
+        if (!curveStageRef.current) {
+          curveStageRef.current = { stroke: completedStroke, clicksLeft: 2 };
+          return;
+        } else if (curveStageRef.current.clicksLeft === 2) {
+          curveStageRef.current.clicksLeft = 1;
+          return;
+        } else {
+          curveStageRef.current = null;
+        }
+      }
+
+      // Polygon stays active across clicks until double-click or snapped closed
+      if (completedStroke.tool === 'shape' && completedStroke.shapeType === 'polygon' && polygonDraftRef.current) {
+        return;
+      }
+
+      currentStrokeRef.current = null;
+      onSelectionSizeChange?.(null);
+
+      // Final Multi-Pass Chaikin + Corner-Aware Stroke Smoothing on freehand strokes
+      const finalPoints =
+        completedStroke.tool === 'shape'
+          ? completedStroke.points
+          : smoothStrokePoints(completedStroke.points, { passes: 3, subdivide: true });
+
+      const finalizedStroke: Stroke = {
+        ...completedStroke,
+        points: finalPoints,
+      };
+
+      const strokesToCommit = createMirroredStrokes(
+        finalizedStroke,
+        symmetryMode,
+        canvasDimensions.width,
+        canvasDimensions.height
+      );
+
+      onStrokesChange([...strokes, ...strokesToCommit]);
+    };
+
+    const handleDoubleClick = () => {
+      if (tool === 'shape' && shapeType === 'polygon' && polygonDraftRef.current) {
+        const finalized = { ...polygonDraftRef.current };
+        polygonDraftRef.current = null;
+        currentStrokeRef.current = null;
+        isDrawingRef.current = false;
+        const commits = createMirroredStrokes(
+          finalized,
+          symmetryMode,
+          canvasDimensions.width,
+          canvasDimensions.height
+        );
+        onStrokesChange([...strokes, ...commits]);
+      }
+    };
+
+    // Draggable active template bar handlers
+    const handleHudPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest('button, input, [role="button"]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {}
+      isDraggingHudRef.current = true;
+      setIsDraggingHud(true);
+      dragStartPointerRef.current = { x: e.clientX, y: e.clientY };
+      dragStartOffsetRef.current = { ...hudOffset };
+    };
+
+    const handleHudPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingHudRef.current) return;
+      const dx = e.clientX - dragStartPointerRef.current.x;
+      const dy = e.clientY - dragStartPointerRef.current.y;
+      setHudOffset({ x: dragStartOffsetRef.current.x + dx, y: dragStartOffsetRef.current.y + dy });
+    };
+
+    const handleHudPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingHudRef.current) return;
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      isDraggingHudRef.current = false;
+      setIsDraggingHud(false);
+    };
+
+    const displayW = (resizingPreview?.width ?? canvasDimensions.width) * zoomLevel;
+    const displayH = (resizingPreview?.height ?? canvasDimensions.height) * zoomLevel;
+
+    const getCanvasCursor = () => {
+      if (tool === 'text') return 'text';
+      if (tool === 'picker') return 'crosshair';
+      if (tool === 'magnifier') return 'zoom-in';
+      if (tool === 'select' || tool === 'shape') return 'crosshair';
+      return 'crosshair';
+    };
+
+    return (
+      <div className="flex-1 min-h-0 flex flex-col bg-[#C9D2E3] relative overflow-hidden">
+        {/* Floating Tracing HUD (Visible ONLY when a Paint Book template is active) */}
         {activeTemplate && (
-          <div className="absolute top-3 left-3 right-3 z-20 flex items-start justify-between gap-2 pointer-events-none">
-            {/* Movable Template Title Block & Controls */}
+          <div data-canvas-hud="true" className="absolute top-2.5 right-6 z-30 flex items-center pointer-events-none">
             <div
-              style={{
-                transform: `translate3d(${hudOffset.x}px, ${hudOffset.y}px, 0)`,
-                touchAction: 'none',
-              }}
+              style={{ transform: `translate3d(${hudOffset.x}px, ${hudOffset.y}px, 0)`, touchAction: 'none' }}
               onPointerDown={handleHudPointerDown}
               onPointerMove={handleHudPointerMove}
               onPointerUp={handleHudPointerUp}
               onPointerCancel={handleHudPointerUp}
               onDoubleClick={() => setHudOffset({ x: 0, y: 0 })}
-              className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-white/95 backdrop-blur-md border shadow-md transition-shadow select-none cursor-grab active:cursor-grabbing text-xs text-slate-800 pointer-events-auto ${
-                isDraggingHud
-                  ? 'border-blue-500 shadow-xl ring-2 ring-blue-400/40'
-                  : 'border-slate-200/90 hover:border-blue-300 hover:shadow-lg'
+              className={`relative flex items-center gap-1.5 px-2.5 py-1 bg-white border text-xs text-[#1E1E1E] pointer-events-auto cursor-grab active:cursor-grabbing ${
+                isDraggingHud ? 'border-[#1979CA]' : 'border-[#9AA4B2]'
               }`}
-              title="Click and drag to move this title block anywhere (Double-click to reset)"
+              title="Drag to move stencil controls"
             >
-              {/* Drag Handle Grip Icon */}
-              <div
-                className="cursor-grab active:cursor-grabbing p-0.5 text-slate-400 hover:text-blue-600 flex items-center shrink-0"
-                title="Drag to move title block anywhere"
-              >
-                <GripVertical className="w-3.5 h-3.5" />
-              </div>
-
-              {/* Guide Visibility Toggle */}
+              <GripVertical className="w-3.5 h-3.5 text-[#777]" />
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowTemplateGuide(!showTemplateGuide);
                 }}
-                className="p-1 rounded-full text-slate-700 hover:text-blue-600 hover:bg-blue-50 cursor-pointer transition-colors"
-                title={showTemplateGuide ? 'Hide tracing guide' : 'Show tracing guide'}
+                className="p-0.5 hover:bg-[#E5F1FB] cursor-pointer"
+                title={showTemplateGuide ? 'Hide stencil' : 'Show stencil'}
               >
-                {showTemplateGuide ? (
-                  <Eye className="w-3.5 h-3.5 text-blue-600" />
-                ) : (
-                  <EyeOff className="w-3.5 h-3.5 text-slate-400" />
-                )}
+                {showTemplateGuide ? <Eye className="w-3.5 h-3.5 text-[#1979CA]" /> : <EyeOff className="w-3.5 h-3.5 text-[#888]" />}
               </button>
-
-              {/* Title Text */}
-              <span className="font-bold truncate max-w-[95px] sm:max-w-[150px] text-slate-800 cursor-grab">
-                {activeTemplate.name}
-              </span>
-
-              <div className="h-3 w-[1px] bg-slate-200" />
-
-              {/* Opacity Adjustment */}
+              <span className="font-semibold truncate max-w-[110px]">{activeTemplate.name}</span>
               <button
                 ref={opacityButtonRef}
                 type="button"
@@ -575,110 +1594,120 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                   e.stopPropagation();
                   setShowOpacitySlider(!showOpacitySlider);
                 }}
-                className="flex items-center gap-1 text-blue-600 hover:text-blue-800 px-1 font-bold cursor-pointer hover:bg-blue-50 rounded-md py-0.5 transition-colors"
-                title="Adjust guide opacity and outline details"
+                className="flex items-center gap-0.5 px-1 hover:bg-[#E5F1FB] text-[#1979CA] font-semibold cursor-pointer"
+                title="Adjust stencil opacity"
               >
                 <Sliders className="w-3 h-3" />
                 <span>{Math.round(templateOpacity * 100)}%</span>
               </button>
 
-              {/* Outline Trace Mode Toggle Button */}
+              <div className="h-3 w-[1px] bg-[#DADBDC]" />
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  data-testid="mirror-h-btn"
+                  aria-pressed={symmetryMode === 'horizontal' || symmetryMode === 'quad'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleMirrorAxis('horizontal');
+                  }}
+                  className={`px-1 py-0.5 text-[10px] border cursor-pointer flex items-center gap-0.5 ${
+                    symmetryMode === 'horizontal' || symmetryMode === 'quad'
+                      ? 'bg-[#D8E8FA] border-[#7DA2CE] font-bold'
+                      : 'border-transparent hover:bg-[#E5F1FB]'
+                  }`}
+                >
+                  <FlipHorizontal className="w-3 h-3" /> H
+                </button>
+                <button
+                  type="button"
+                  data-testid="mirror-v-btn"
+                  aria-pressed={symmetryMode === 'vertical' || symmetryMode === 'quad'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleMirrorAxis('vertical');
+                  }}
+                  className={`px-1 py-0.5 text-[10px] border cursor-pointer flex items-center gap-0.5 ${
+                    symmetryMode === 'vertical' || symmetryMode === 'quad'
+                      ? 'bg-[#D8E8FA] border-[#7DA2CE] font-bold'
+                      : 'border-transparent hover:bg-[#E5F1FB]'
+                  }`}
+                >
+                  <FlipVertical className="w-3 h-3" /> V
+                </button>
+              </div>
+
               {(activeTemplate.type === 'photo' || activeTemplate.mediaUrl) && (
-                <>
-                  <div className="h-3 w-[1px] bg-slate-200" />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (traceMode === 'outline') setTraceMode('grayscale');
-                      else if (traceMode === 'grayscale') setTraceMode('color');
-                      else setTraceMode('outline');
-                    }}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer ${
-                      traceMode === 'outline'
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : traceMode === 'grayscale'
-                        ? 'bg-slate-200 text-slate-800'
-                        : 'bg-emerald-100 text-emerald-800'
-                    }`}
-                    title="Toggle between Outline Trace, Grayscale, and Full Color modes"
-                  >
-                    {isProcessingOutline ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Wand2 className="w-3 h-3" />
-                    )}
-                    <span>{traceMode === 'outline' ? 'Outline Trace' : traceMode === 'grayscale' ? 'B&W' : 'Color'}</span>
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTraceMode((m) => (m === 'outline' ? 'grayscale' : m === 'grayscale' ? 'color' : 'outline'));
+                  }}
+                  className="px-1.5 py-0.5 bg-[#E5F1FB] border border-[#A0C5E8] text-[10px] font-semibold text-[#1979CA] flex items-center gap-1 cursor-pointer"
+                >
+                  {isProcessingOutline ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                  <span>{traceMode === 'outline' ? 'Outline' : traceMode === 'grayscale' ? 'Gray' : 'Color'}</span>
+                </button>
               )}
 
-              {/* Video Play/Pause toggle if template is video */}
               {activeTemplate.type === 'video' && (
-                <>
-                  <div className="h-3 w-[1px] bg-slate-200" />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleToggleVideoPlayback();
-                    }}
-                    className="p-1 rounded text-slate-700 hover:text-blue-600 cursor-pointer"
-                    title={isVideoPlaying ? 'Pause Frame' : 'Play Video'}
-                  >
-                    {isVideoPlaying ? (
-                      <Pause className="w-3 h-3" />
-                    ) : (
-                      <Play className="w-3 h-3" />
-                    )}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!videoRef.current) return;
+                    if (videoRef.current.paused) {
+                      videoRef.current.play();
+                      setIsVideoPlaying(true);
+                    } else {
+                      videoRef.current.pause();
+                      setIsVideoPlaying(false);
+                    }
+                  }}
+                  className="p-0.5 hover:bg-[#E5F1FB] cursor-pointer"
+                >
+                  {isVideoPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                </button>
               )}
 
-              <div className="h-3 w-[1px] bg-slate-200" />
-
-              {/* Close template button */}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onClearTemplate();
                 }}
-                className="text-slate-400 hover:text-red-500 text-[10px] font-bold px-1.5 py-0.5 rounded-full hover:bg-red-50 cursor-pointer transition-colors"
-                title="Remove template from canvas"
+                className="px-1 hover:bg-[#E81123] hover:text-white cursor-pointer"
+                title="Close Paint Book Stencil"
               >
                 ✕
               </button>
 
-              {/* Attached Opacity Popover (Moves together with the title block!) */}
               {showOpacitySlider && (
                 <div
                   ref={opacityPopoverRef}
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
-                  className="absolute top-full mt-2 left-0 z-40 p-3.5 rounded-2xl bg-white/98 backdrop-blur-md border border-slate-200 shadow-2xl flex flex-col gap-3 w-64 text-xs text-slate-800 cursor-default animate-in fade-in slide-in-from-top-1 duration-150"
+                  className="absolute top-full mt-1 left-0 z-40 p-2.5 bg-[#F5F6F7] border border-[#9AA4B2] shadow-md w-56 text-[11px] flex flex-col gap-2 cursor-default"
                 >
-                  <div>
-                    <div className="flex justify-between items-center text-slate-700 mb-1">
-                      <span className="font-semibold">Guide Opacity</span>
-                      <span className="font-bold text-blue-600">{Math.round(templateOpacity * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0.05"
-                      max="1"
-                      step="0.05"
-                      value={templateOpacity}
-                      onChange={(e) => onTemplateOpacityChange(parseFloat(e.target.value))}
-                      className="w-full accent-blue-600 cursor-pointer"
-                    />
+                  <div className="flex justify-between">
+                    <span>Guide Opacity</span>
+                    <span className="font-bold text-[#1979CA]">{Math.round(templateOpacity * 100)}%</span>
                   </div>
-
+                  <input
+                    type="range"
+                    min="0.05"
+                    max="1"
+                    step="0.05"
+                    value={templateOpacity}
+                    onChange={(e) => onTemplateOpacityChange(parseFloat(e.target.value))}
+                    className="w-full accent-[#1979CA]"
+                  />
                   {traceMode === 'outline' && (
-                    <div>
-                      <div className="flex justify-between items-center text-slate-700 mb-1">
-                        <span className="font-semibold">Outline Detail Sensitivity</span>
-                        <span className="font-bold text-blue-600">{outlineDetailThreshold}</span>
+                    <>
+                      <div className="flex justify-between">
+                        <span>Outline Sensitivity</span>
+                        <span className="font-bold text-[#1979CA]">{outlineDetailThreshold}</span>
                       </div>
                       <input
                         type="range"
@@ -687,241 +1716,271 @@ export const CanvasStudio: React.FC<CanvasStudioProps> = ({
                         step="5"
                         value={outlineDetailThreshold}
                         onChange={(e) => setOutlineDetailThreshold(parseInt(e.target.value, 10))}
-                        className="w-full accent-blue-600 cursor-pointer"
+                        className="w-full accent-[#1979CA]"
                       />
-                      <div className="flex justify-between text-[9px] text-slate-400 mt-0.5">
-                        <span>More lines (15)</span>
-                        <span>Fewer lines (80)</span>
-                      </div>
-                    </div>
+                    </>
                   )}
-
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px] text-slate-500">
-                    <span>Mode: <strong className="uppercase text-blue-600 font-bold">{traceMode}</strong></span>
-                    <button
-                      type="button"
-                      onClick={() => setShowOpacitySlider(false)}
-                      className="text-blue-600 font-bold hover:underline cursor-pointer"
-                    >
-                      Done
-                    </button>
-                  </div>
                 </div>
               )}
             </div>
-
-            {/* Quick Switch Template Button */}
-            <button
-              onClick={onOpenTemplates}
-              className="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 hover:border-blue-400 shadow-md text-[11px] font-bold text-slate-700 hover:text-blue-600 transition-colors cursor-pointer pointer-events-auto shrink-0"
-            >
-              Paint Books
-            </button>
           </div>
         )}
 
-        {/* Undo Close – Restore Paint Book Button when template was closed */}
-        {!activeTemplate && lastClosedTemplate && onRestoreTemplate && (
-          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-auto animate-in fade-in slide-in-from-top-1 duration-150">
-            <button
-              onClick={onRestoreTemplate}
-              className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-white/95 hover:bg-white text-blue-700 hover:text-blue-800 border-2 border-blue-400/90 shadow-[0_4px_16px_rgba(22,75,206,0.18)] hover:shadow-[0_6px_20px_rgba(22,75,206,0.25)] text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-md"
-              title={`Restore ${lastClosedTemplate.name} (${lastClosedTemplate.difficulty})`}
-            >
-              <span className="text-sm font-black text-blue-600 leading-none">↶</span>
-              <span className="whitespace-nowrap">Undo Close – Restore Paint Book</span>
-              <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 ml-1 border border-blue-200 truncate max-w-[140px]">
-                {lastClosedTemplate.name}
-              </span>
-            </button>
-
-            {/* Quick Switch Template Button */}
-            <button
-              onClick={onOpenTemplates}
-              className="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 hover:border-blue-400 shadow-md text-[11px] font-bold text-slate-700 hover:text-blue-600 transition-colors cursor-pointer"
-            >
-              Paint Books
-            </button>
-          </div>
-        )}
-
-        {/* Blank Sheet Top HUD: Draggable Paint Books Banner On Top of Blank Sheet Canvas */}
-        {!activeTemplate && (
-          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
-            <div
-              style={{
-                transform: `translate3d(${hudOffset.x}px, ${hudOffset.y}px, 0)`,
-                touchAction: 'none',
-              }}
-              onPointerDown={handleHudPointerDown}
-              onPointerMove={handleHudPointerMove}
-              onPointerUp={handleHudPointerUp}
-              onPointerCancel={handleHudPointerUp}
-              onDoubleClick={() => setHudOffset({ x: 0, y: 0 })}
-              className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-md border shadow-md transition-shadow select-none cursor-grab active:cursor-grabbing text-xs text-slate-800 pointer-events-auto ${
-                isDraggingHud
-                  ? 'border-blue-500 shadow-xl ring-2 ring-blue-400/40'
-                  : 'border-slate-200/90 hover:border-blue-300 hover:shadow-lg'
-              }`}
-              title="Click and drag to move Paint Books anywhere on the sheet (Double-click to reset position)"
-            >
-              {/* Drag Handle Grip Icon */}
-              <div
-                className="cursor-grab active:cursor-grabbing p-0.5 text-slate-400 hover:text-blue-600 flex items-center shrink-0"
-                title="Drag to move Paint Books anywhere on the sheet"
-              >
-                <GripVertical className="w-3.5 h-3.5" />
-              </div>
-
-              {/* Paint Books Button */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenTemplates();
-                }}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white shadow-sm border border-blue-400/80 text-xs font-black cursor-pointer active:scale-95 transition-all select-none"
-                title="Open Paint Books Stencil Gallery"
-              >
-                <BookOpen className="w-3.5 h-3.5 text-white shrink-0" />
-                <span>Paint Books</span>
-                <span className="bg-white/20 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider hidden xs:inline">
-                  Select Picture
+        {/* Top Horizontal Ruler (View -> Rulers) */}
+        {showRulers && (
+          <div className="h-[18px] bg-[#F5F6F7] border-b border-[#C6C7C8] pl-[18px] flex items-end overflow-hidden shrink-0 select-none text-[9px] text-[#555]">
+            <div className="relative h-full" style={{ width: `${displayW}px` }}>
+              {Array.from({ length: Math.ceil(canvasDimensions.width / 100) + 1 }, (_, i) => (
+                <span
+                  key={i}
+                  className="absolute bottom-0 border-l border-[#8E8E8E] pl-0.5 leading-none pb-0.5"
+                  style={{ left: `${i * 100 * zoomLevel}px` }}
+                >
+                  {i * 100}
                 </span>
-              </button>
+              ))}
             </div>
-
-            {lastClosedTemplate && onRestoreTemplate && (
-              <button
-                type="button"
-                onClick={onRestoreTemplate}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 hover:bg-white text-blue-700 border border-blue-300 shadow-sm text-xs font-bold transition-all active:scale-95 cursor-pointer backdrop-blur-md pointer-events-auto"
-                title={`Restore ${lastClosedTemplate.name}`}
-              >
-                <span className="text-sm font-black text-blue-600 leading-none">↶</span>
-                <span className="hidden xs:inline">Restore Book</span>
-              </button>
-            )}
           </div>
         )}
 
-        {/* Canvas & Tracing Layer Container with Smooth Transform Zoom & Pan */}
-        <div
-          className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-200/80 flex items-center justify-center transition-transform duration-75 ease-out"
-          style={{
-            transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${zoomLevel})`,
-            transformOrigin: 'center center',
-          }}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onTouchCancel={handleTouchEnd}
-        >
-          {/* Main User Drawing Canvas */}
-          <canvas
-            ref={canvasRef}
-            width={canvasDimensions.width}
-            height={canvasDimensions.height}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            className="drawing-surface block max-w-[88vw] max-h-[64vh] sm:max-h-[70vh] aspect-square object-contain cursor-crosshair relative z-10"
-            style={{
-              touchAction: 'none',
-              background: 'transparent',
-            }}
-          />
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+          {/* Left Vertical Ruler (View -> Rulers) */}
+          {showRulers && (
+            <div className="w-[18px] bg-[#F5F6F7] border-r border-[#C6C7C8] shrink-0 overflow-hidden select-none text-[9px] text-[#555] relative">
+              {Array.from({ length: Math.ceil(canvasDimensions.height / 100) + 1 }, (_, i) => (
+                <span
+                  key={i}
+                  className="absolute left-0 right-0 border-t border-[#8E8E8E] text-center pt-0.5 leading-none"
+                  style={{ top: `${i * 100 * zoomLevel}px` }}
+                >
+                  {i * 100}
+                </span>
+              ))}
+            </div>
+          )}
 
-          {/* Real Photo / Video / Vector Tracing Overlay */}
-          {activeTemplate && showTemplateGuide && (
-            <div
-              className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden transition-opacity duration-150 z-0"
-              style={{
-                opacity: templateOpacity,
-              }}
-            >
-              {/* 1. Underlying Real Picture Base (Ensures picture NEVER disappears) */}
-              {activeTemplate.mediaUrl && activeTemplate.type !== 'video' && (
-                <img
-                  src={activeTemplate.mediaUrl.startsWith('data:') ? activeTemplate.mediaUrl : encodeURI(decodeURI(activeTemplate.mediaUrl))}
-                  alt={activeTemplate.name}
-                  crossOrigin="anonymous"
-                  referrerPolicy="no-referrer"
-                  className={`absolute inset-0 w-full h-full object-contain select-none transition-all duration-200 ${
-                    activeTemplate.mediaUrl?.includes('/assets/aistudio/') || activeTemplate.collectionId
-                      ? 'opacity-100 filter contrast(130%)'
-                      : traceMode === 'outline'
-                      ? 'opacity-40 filter contrast(110%)'
-                      : traceMode === 'grayscale'
-                      ? 'opacity-100 filter grayscale(100%)'
-                      : 'opacity-100'
-                  }`}
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    target.onerror = null;
-                    target.src = generateFallbackSvgDataUrl(activeTemplate.name);
+          {/* Scrollable Pale Blue-Grey Windows Paint Workspace with Visible Vertical Scrollbar */}
+          <div
+            ref={workspaceRef}
+            data-testid="paint-workspace"
+            onPointerDownCapture={handleWorkspacePointerDownCapture}
+            onPointerMoveCapture={handleWorkspacePointerMoveCapture}
+            onPointerUpCapture={handleWorkspacePointerEndCapture}
+            onPointerCancel={handleWorkspacePointerEndCapture}
+            onContextMenu={(e) => e.preventDefault()}
+            className="flex-1 min-h-0 overflow-y-scroll overflow-x-auto paint-workspace-scroll bg-[#C9D2E3] p-[5px]"
+          >
+            <div className="min-h-[calc(100%+1px)] w-fit">
+              {/* Upper-Left Positioned Crisp White Rectangular Drawing Sheet */}
+              <div
+                data-testid="canvas-sheet-frame"
+                className="relative bg-white border border-[#9AA4B2] select-none shrink-0"
+                style={{
+                  width: `${displayW}px`,
+                  height: `${displayH}px`,
+                }}
+              >
+              {/* Underlying Tracing Template Layer (inside white sheet) */}
+              {activeTemplate && showTemplateGuide && (
+                <div
+                  className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden z-0"
+                  style={{ opacity: templateOpacity }}
+                >
+                  {activeTemplate.mediaUrl && activeTemplate.type !== 'video' && (
+                    <img
+                      src={
+                        activeTemplate.mediaUrl.startsWith('data:')
+                          ? activeTemplate.mediaUrl
+                          : encodeURI(decodeURI(activeTemplate.mediaUrl))
+                      }
+                      alt={activeTemplate.name}
+                      crossOrigin="anonymous"
+                      referrerPolicy="no-referrer"
+                      className={`w-full h-full object-contain select-none ${
+                        activeTemplate.mediaUrl?.includes('/assets/aistudio/') || activeTemplate.collectionId
+                          ? 'opacity-100 contrast-125'
+                          : traceMode === 'outline'
+                          ? 'opacity-40 contrast-110'
+                          : traceMode === 'grayscale'
+                          ? 'opacity-100 grayscale'
+                          : 'opacity-100'
+                      }`}
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        target.onerror = null;
+                        target.src = generateFallbackSvgDataUrl(activeTemplate.name);
+                      }}
+                    />
+                  )}
+
+                  {activeTemplate.type === 'video' && activeTemplate.mediaUrl && (
+                    <video
+                      ref={videoRef}
+                      src={activeTemplate.mediaUrl}
+                      loop
+                      muted
+                      playsInline
+                      className="w-full h-full object-contain select-none"
+                    />
+                  )}
+
+                  {traceMode === 'outline' &&
+                    !activeTemplate.mediaUrl?.includes('/assets/aistudio/') &&
+                    !activeTemplate.collectionId &&
+                    processedTraceUrl && (
+                      <img
+                        src={processedTraceUrl}
+                        alt={`${activeTemplate.name} Outline`}
+                        className="absolute inset-0 w-full h-full object-contain mix-blend-multiply select-none"
+                      />
+                    )}
+
+                  {!activeTemplate.mediaUrl && activeTemplate.svgPath && (
+                    <svg
+                      viewBox={activeTemplate.viewBox || '0 0 200 200'}
+                      className="w-full h-full p-4 stroke-slate-900 fill-none"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d={activeTemplate.svgPath} />
+                    </svg>
+                  )}
+                </div>
+              )}
+
+              {/* Main Drawing Canvas Surface */}
+              <canvas
+                ref={canvasRef}
+                width={canvasDimensions.width}
+                height={canvasDimensions.height}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onPointerLeave={() => onCursorPositionChange?.(null)}
+                onDoubleClick={handleDoubleClick}
+                className="drawing-surface block w-full h-full relative z-10"
+                style={{
+                  cursor: getCanvasCursor(),
+                  background: 'transparent',
+                  touchAction: 'none',
+                }}
+              />
+
+              {/* Gridlines Overlay (View -> Gridlines) */}
+              {showGrid && (
+                <div
+                  className="absolute inset-0 pointer-events-none z-20"
+                  style={{
+                    backgroundImage:
+                      'linear-gradient(to right, rgba(100, 116, 139, 0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.25) 1px, transparent 1px)',
+                    backgroundSize: `${24 * zoomLevel}px ${24 * zoomLevel}px`,
                   }}
                 />
               )}
 
-              {/* 2. Video if video template */}
-              {activeTemplate.type === 'video' && activeTemplate.mediaUrl && (
-                <video
-                  ref={videoRef}
-                  src={activeTemplate.mediaUrl}
-                  loop
-                  muted
-                  playsInline
-                  className="absolute inset-0 w-full h-full object-contain select-none"
+              {/* Symmetry Center Guide Overlay */}
+              {symmetryMode !== 'none' && (
+                <div data-testid="mirror-guide-overlay" className="absolute inset-0 pointer-events-none z-20">
+                  {(symmetryMode === 'horizontal' || symmetryMode === 'quad') && (
+                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0 border-l-2 border-dashed border-[#1979CA]/70" />
+                  )}
+                  {(symmetryMode === 'vertical' || symmetryMode === 'quad') && (
+                    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0 border-t-2 border-dashed border-[#1979CA]/70" />
+                  )}
+                </div>
+              )}
+
+              {/* Active Selection Box Overlay */}
+              {selectionRect && selectionRect.width >= 2 && selectionRect.height >= 2 && (
+                <div
+                  data-testid="selection-box-overlay"
+                  className="absolute pointer-events-none z-30 border border-dashed border-[#1979CA] bg-[#1979CA]/5"
+                  style={{
+                    left: `${selectionRect.x * zoomLevel}px`,
+                    top: `${selectionRect.y * zoomLevel}px`,
+                    width: `${selectionRect.width * zoomLevel}px`,
+                    height: `${selectionRect.height * zoomLevel}px`,
+                  }}
                 />
               )}
 
-              {/* 3. High-Contrast Line Art Trace Layer (Active in Outline Mode for non-outline photos) */}
-              {traceMode === 'outline' &&
-                !activeTemplate.mediaUrl?.includes('/assets/aistudio/') &&
-                !activeTemplate.collectionId && (
-                <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
-                  {processedTraceUrl ? (
-                    <img
-                      src={processedTraceUrl}
-                      alt={`${activeTemplate.name} Outline Trace`}
-                      className="w-full h-full object-contain select-none mix-blend-multiply"
-                    />
-                  ) : activeTemplate.svgPath ? (
-                    <div className="w-full h-full p-6 flex items-center justify-center">
-                      <svg
-                        viewBox={activeTemplate.viewBox || '0 0 200 200'}
-                        className="w-full h-full stroke-slate-950 fill-none"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d={activeTemplate.svgPath} />
-                      </svg>
-                    </div>
-                  ) : null}
+              {/* Inline Text Input Box */}
+              {activeTextBox && (
+                <div
+                  data-canvas-hud="true"
+                  className="absolute z-40"
+                  style={{
+                    left: `${activeTextBox.x * zoomLevel}px`,
+                    top: `${activeTextBox.y * zoomLevel}px`,
+                  }}
+                >
+                  <textarea
+                    ref={textInputRef}
+                    value={activeTextBox.text}
+                    onChange={(e) =>
+                      setActiveTextBox((prev) => (prev ? { ...prev, text: e.target.value } : null))
+                    }
+                    onBlur={commitTextAnnotation}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setActiveTextBox(null);
+                      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        commitTextAnnotation();
+                      }
+                    }}
+                    placeholder="Type text..."
+                    rows={2}
+                    className="min-w-[140px] bg-white/80 border border-dashed border-[#1979CA] px-1 py-0.5 focus:outline-none resize both"
+                    style={{
+                      color,
+                      fontSize: `${Math.max(14, Math.round(size * 2.4)) * zoomLevel}px`,
+                      lineHeight: 1.25,
+                      fontFamily: '"Segoe UI", Arial, sans-serif',
+                    }}
+                  />
                 </div>
               )}
 
-              {/* 4. Standalone Vector SVG Template without mediaUrl */}
-              {!activeTemplate.mediaUrl && activeTemplate.svgPath && (
-                <div className="w-full h-full p-6 flex items-center justify-center bg-white">
-                  <svg
-                    viewBox={activeTemplate.viewBox || '0 0 200 200'}
-                    className="w-full h-full stroke-slate-900 fill-none"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d={activeTemplate.svgPath} />
-                  </svg>
-                </div>
+              {/* Live Dashed Resize Preview Outline */}
+              {resizingPreview && (
+                <div
+                  className="absolute top-0 left-0 border border-dashed border-[#1E1E1E] pointer-events-none z-40"
+                  style={{
+                    width: `${resizingPreview.width * zoomLevel}px`,
+                    height: `${resizingPreview.height * zoomLevel}px`,
+                  }}
+                />
               )}
+
+              {/* Classic Windows Paint 3 White/Black Square Resize Handles (Right, Bottom, Corner) */}
+              <div
+                onPointerDown={(e) => startSheetResize('right', e)}
+                data-testid="resize-handle-right"
+                className="absolute top-1/2 -right-[5px] -translate-y-1/2 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-ew-resize z-30"
+                title="Drag to resize canvas width"
+              />
+              <div
+                onPointerDown={(e) => startSheetResize('bottom', e)}
+                data-testid="resize-handle-bottom"
+                className="absolute left-1/2 -bottom-[5px] -translate-x-1/2 w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-ns-resize z-30"
+                title="Drag to resize canvas height"
+              />
+              <div
+                onPointerDown={(e) => startSheetResize('corner', e)}
+                data-testid="resize-handle-corner"
+                className="absolute -right-[5px] -bottom-[5px] w-[5px] h-[5px] bg-white border border-[#1E1E1E] cursor-nwse-resize z-30"
+                title="Drag to resize canvas width & height"
+              />
+              </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
-    </div>
-  );
-};
+    );
+  }
+);
+
+CanvasStudio.displayName = 'CanvasStudio';
