@@ -322,6 +322,40 @@ test('createMirroredStrokes supports custom interactive axis positions and Symme
   assert.equal(resolveSymmetryToggle('horizontal', 'vertical'), 'none');
 });
 
+test('createMirroredStrokes flips shape orientation flags and exports mirrored SVG transforms', async () => {
+  const { createMirroredStrokes } = await import('./drawing');
+  const arrowStroke = {
+    id: 'shp_arrow_1',
+    tool: 'shape' as const,
+    shapeType: 'arrow-right' as const,
+    outlineStyle: 'solid' as const,
+    fillStyle: 'none' as const,
+    color: '#1979CA',
+    size: 3,
+    opacity: 1,
+    points: [
+      { x: 100, y: 100 },
+      { x: 220, y: 180 },
+    ],
+  };
+
+  const quad = createMirroredStrokes(arrowStroke, 'quad', 1000, 800, { x: 500, y: 400 });
+  assert.equal(quad.length, 4);
+  assert.equal(quad[0].flipH, undefined);
+  assert.equal(quad[0].flipV, undefined);
+  assert.equal(quad[1].flipH, true);
+  assert.equal(quad[1].flipV, undefined);
+  assert.equal(quad[2].flipH, undefined);
+  assert.equal(quad[2].flipV, true);
+  assert.equal(quad[3].flipH, true);
+  assert.equal(quad[3].flipV, true);
+
+  const svg = exportStrokesToSvgString(quad, { width: 1000, height: 800 });
+  assert.ok(svg.includes('scale(-1 1)'));
+  assert.ok(svg.includes('scale(1 -1)'));
+  assert.ok(svg.includes('scale(-1 -1)'));
+});
+
 test('stabilizePointerPoint filters micro-jitter and applies adaptive EMA smoothing', async () => {
   const { stabilizePointerPoint } = await import('./drawing');
   const prev = { x: 100, y: 100, pressure: 0.5 };

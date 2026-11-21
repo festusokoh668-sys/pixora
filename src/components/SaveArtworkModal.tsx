@@ -11,19 +11,21 @@ import {
   Sparkles,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { DrawingTemplate, SavedArtwork, Stroke } from '../types';
+import { CanvasLayer, DrawingTemplate, SavedArtwork, Stroke } from '../types';
 import {
   generateArtworkFilename,
   renderStrokeToContext,
   exportStrokesToSvgString,
   getContainDrawRect,
 } from '../utils/drawing';
+import { getVisibleOrderedStrokes } from '../utils/layers';
 import { getSafeShareUrl } from '../utils/color';
 
 interface SaveArtworkModalProps {
   isOpen: boolean;
   onClose: () => void;
   strokes: Stroke[];
+  layers?: CanvasLayer[];
   activeTemplate: DrawingTemplate | null;
   onSaveToGallery: (artwork: SavedArtwork) => void;
   canvasDimensions?: { width: number; height: number };
@@ -33,10 +35,15 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   isOpen,
   onClose,
   strokes,
+  layers,
   activeTemplate,
   onSaveToGallery,
   canvasDimensions = { width: 1200, height: 1200 },
 }) => {
+  const orderedStrokes = React.useMemo(
+    () => (layers && layers.length > 0 ? getVisibleOrderedStrokes(strokes, layers) : strokes),
+    [strokes, layers]
+  );
   const [artworkTitle, setArtworkTitle] = useState<string>('');
   const [includeTemplateGuide, setIncludeTemplateGuide] = useState<boolean>(false);
   const [previewDataUrl, setPreviewDataUrl] = useState<string>('');
@@ -110,8 +117,8 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       ctx.restore();
     }
 
-    // Render all strokes with distinct tool properties
-    for (const stroke of strokes) {
+    // Render all visible strokes in layer z-order
+    for (const stroke of orderedStrokes) {
       renderStrokeToContext(ctx, stroke, 'export');
     }
 
@@ -180,7 +187,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   };
 
   const getSvgString = (): string => {
-    return exportStrokesToSvgString(strokes, {
+    return exportStrokesToSvgString(orderedStrokes, {
       width: Math.max(300, canvasDimensions.width),
       height: Math.max(300, canvasDimensions.height),
       title: artworkTitle.trim() || 'PIXORA Artwork',

@@ -404,6 +404,7 @@ export function createMirroredStrokes(
     result.push({
       ...baseStroke,
       id: `${baseStroke.id}_symH`,
+      ...(baseStroke.tool === 'shape' ? { flipH: !baseStroke.flipH } : {}),
       points: baseStroke.points.map((p) => ({
         ...p,
         x: Math.round((cx + (cx - p.x)) * 10) / 10,
@@ -415,6 +416,7 @@ export function createMirroredStrokes(
     result.push({
       ...baseStroke,
       id: `${baseStroke.id}_symV`,
+      ...(baseStroke.tool === 'shape' ? { flipV: !baseStroke.flipV } : {}),
       points: baseStroke.points.map((p) => ({
         ...p,
         y: Math.round((cy + (cy - p.y)) * 10) / 10,
@@ -426,6 +428,9 @@ export function createMirroredStrokes(
     result.push({
       ...baseStroke,
       id: `${baseStroke.id}_symQ`,
+      ...(baseStroke.tool === 'shape'
+        ? { flipH: !baseStroke.flipH, flipV: !baseStroke.flipV }
+        : {}),
       points: baseStroke.points.map((p) => ({
         ...p,
         x: Math.round((cx + (cx - p.x)) * 10) / 10,
@@ -606,17 +611,48 @@ export function renderStrokeToContext(
 
   // Handle geometric Shapes tool
   if (stroke.tool === 'shape' && stroke.shapeType && stroke.points.length > 0) {
-    renderShapeToContext(
-      ctx,
-      stroke.shapeType,
-      stroke.points,
-      stroke.color,
-      stroke.fillColor || '#FFFFFF',
-      stroke.size,
-      stroke.opacity,
-      stroke.outlineStyle || 'solid',
-      stroke.fillStyle || 'none'
-    );
+    if (stroke.flipH || stroke.flipV) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const p of stroke.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      const bx = (minX + maxX) / 2;
+      const by = (minY + maxY) / 2;
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.scale(stroke.flipH ? -1 : 1, stroke.flipV ? -1 : 1);
+      ctx.translate(-bx, -by);
+      renderShapeToContext(
+        ctx,
+        stroke.shapeType,
+        stroke.points,
+        stroke.color,
+        stroke.fillColor || '#FFFFFF',
+        stroke.size,
+        stroke.opacity,
+        stroke.outlineStyle || 'solid',
+        stroke.fillStyle || 'none'
+      );
+      ctx.restore();
+    } else {
+      renderShapeToContext(
+        ctx,
+        stroke.shapeType,
+        stroke.points,
+        stroke.color,
+        stroke.fillColor || '#FFFFFF',
+        stroke.size,
+        stroke.opacity,
+        stroke.outlineStyle || 'solid',
+        stroke.fillStyle || 'none'
+      );
+    }
     return;
   }
 
@@ -1005,7 +1041,23 @@ export function exportStrokesToSvgString(
         stroke.outlineStyle === 'none'
           ? 'stroke="none"'
           : `stroke="${stroke.color}" stroke-width="${Math.max(1, stroke.size)}"`;
-      elements += `  <path d="${d}" ${fillAttr} ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" opacity="${stroke.opacity}" />\n`;
+      let transformAttr = '';
+      if (stroke.flipH || stroke.flipV) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const p of stroke.points) {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        }
+        const bx = Math.round(((minX + maxX) / 2) * 10) / 10;
+        const by = Math.round(((minY + maxY) / 2) * 10) / 10;
+        transformAttr = ` transform="translate(${bx} ${by}) scale(${stroke.flipH ? -1 : 1} ${stroke.flipV ? -1 : 1}) translate(${-bx} ${-by})"`;
+      }
+      elements += `  <path d="${d}" ${fillAttr} ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" opacity="${stroke.opacity}"${transformAttr} />\n`;
       continue;
     }
 

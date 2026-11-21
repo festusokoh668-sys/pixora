@@ -15,7 +15,9 @@ import { CreativeSparkModal } from './components/CreativeSparkModal';
 import { ClearConfirmModal } from './components/ClearConfirmModal';
 import { ResizeCanvasModal } from './components/ResizeCanvasModal';
 import { ColorsModal } from './components/ColorsModal';
+import { LayersSidebar } from './components/LayersSidebar';
 import {
+  CanvasLayer,
   DrawingTemplate,
   MirrorMode,
   SavedArtwork,
@@ -32,6 +34,19 @@ import {
   generateArtworkFilename,
   exportStrokesToSvgString,
 } from './utils/drawing';
+import {
+  DEFAULT_LAYER_ID,
+  addTransparentLayer,
+  createInitialLayers,
+  deleteLayer,
+  getVisibleOrderedStrokes,
+  moveLayer,
+  renameLayer,
+  reorderLayersFromDisplayOrder,
+  resolveStrokeLayerId,
+  setLayerOpacity,
+  toggleLayerVisibility,
+} from './utils/layers';
 import { TEMPLATES } from './data/templates';
 import { resolveKeyboardShortcut } from './utils/shortcuts';
 
@@ -75,6 +90,11 @@ export default function App() {
   const [selectionSize, setSelectionSize] = useState<{ width: number; height: number } | null>(null);
   const [hasSelection, setHasSelection] = useState<boolean>(false);
   const [canPaste, setCanPaste] = useState<boolean>(false);
+
+  // Multi-layer management state
+  const [layers, setLayers] = useState<CanvasLayer[]>(() => createInitialLayers());
+  const [activeLayerId, setActiveLayerId] = useState<string>(DEFAULT_LAYER_ID);
+  const [showLayersSidebar, setShowLayersSidebar] = useState<boolean>(true);
 
   // History
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -174,11 +194,68 @@ export default function App() {
     }
   };
 
+  const handleAddLayer = () => {
+    const { layers: nextLayers, newLayer } = addTransparentLayer(layers, {
+      afterLayerId: activeLayerId,
+    });
+    setLayers(nextLayers);
+    setActiveLayerId(newLayer.id);
+    showToast(`Added ${newLayer.name}`);
+  };
+
+  const handleToggleLayerVisibility = (layerId: string) => {
+    const target = layers.find((l) => l.id === layerId);
+    setLayers((prev) => toggleLayerVisibility(prev, layerId));
+    if (target) {
+      showToast(target.visible ? `Hid ${target.name}` : `Shown ${target.name}`);
+    }
+  };
+
+  const handleMoveLayer = (layerId: string, direction: 'up' | 'down') => {
+    setLayers((prev) => moveLayer(prev, layerId, direction));
+  };
+
+  const handleReorderLayer = (draggedLayerId: string, targetLayerId: string) => {
+    setLayers((prev) => reorderLayersFromDisplayOrder(prev, draggedLayerId, targetLayerId));
+  };
+
+  const handleDeleteLayer = (layerId: string) => {
+    const target = layers.find((l) => l.id === layerId);
+    const result = deleteLayer(layers, activeLayerId, layerId);
+    if (!result.deleted) {
+      showToast('At least one layer is required');
+      return;
+    }
+    setLayers(result.layers);
+    setActiveLayerId(result.activeLayerId);
+    const hasStrokesInDeleted = strokes.some(
+      (s) => resolveStrokeLayerId(s, layers) === layerId
+    );
+    if (hasStrokesInDeleted) {
+      handleStrokesChange(
+        strokes.filter((s) => resolveStrokeLayerId(s, layers) !== layerId)
+      );
+    }
+    if (target) {
+      showToast(`Deleted ${target.name}`);
+    }
+  };
+
+  const handleRenameLayer = (layerId: string, nextName: string) => {
+    setLayers((prev) => renameLayer(prev, layerId, nextName));
+  };
+
+  const handleLayerOpacityChange = (layerId: string, nextOpacity: number) => {
+    setLayers((prev) => setLayerOpacity(prev, layerId, nextOpacity));
+  };
+
   const handleConfirmClear = () => {
     if (strokes.length > 0) {
       historyRef.current.pushState(strokes);
     }
     setStrokes([]);
+    setLayers(createInitialLayers());
+    setActiveLayerId(DEFAULT_LAYER_ID);
     canvasStudioRef.current?.clearCanvas();
     setIsAutoFullScreenCanvas(true);
     updateHistoryFlags();
@@ -190,6 +267,8 @@ export default function App() {
       historyRef.current.pushState(strokes);
     }
     setStrokes([]);
+    setLayers(createInitialLayers());
+    setActiveLayerId(DEFAULT_LAYER_ID);
     canvasStudioRef.current?.clearCanvas();
     if (activeTemplate) {
       setLastClosedTemplate(activeTemplate);
@@ -544,8 +623,10 @@ export default function App() {
     const baseTitle = activeTemplate ? `Pixora ${activeTemplate.name}` : 'Untitled';
     const filename = generateArtworkFilename(baseTitle, format);
 
+    const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
+
     if (format === 'svg') {
-      const svgString = exportStrokesToSvgString(strokes, {
+      const svgString = exportStrokesToSvgString(visibleOrderedStrokes, {
         width: canvasDimensions.width,
         height: canvasDimensions.height,
         title: baseTitle,
@@ -573,7 +654,7 @@ export default function App() {
       if (fctx) {
         fctx.fillStyle = '#FFFFFF';
         fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-        for (const s of strokes) {
+        for (const s of visibleOrderedStrokes) {
           renderStrokeToContext(fctx, s, 'export');
         }
         dataUrl = fallbackCanvas.toDataURL(
@@ -811,6 +892,8 @@ export default function App() {
             onToggleRulers={() => setShowRulers((prev) => !prev)}
             showStatusBar={showStatusBar}
             onToggleStatusBar={() => setShowStatusBar((prev) => !prev)}
+            showLayersSidebar={showLayersSidebar}
+            onToggleLayersSidebar={() => setShowLayersSidebar((prev) => !prev)}
             onToggleFullScreen={handleToggleFullScreen}
             activeTemplate={activeTemplate}
             lastClosedTemplate={lastClosedTemplate}
@@ -837,50 +920,72 @@ export default function App() {
             onApplyFilter={(filter) => canvasStudioRef.current?.applyFilter(filter)}
           />
 
-          {/* Main Pale Blue-Grey Workspace & Upper-Left White Canvas */}
-          <main className="flex-1 min-h-0 w-full flex flex-col items-stretch justify-stretch relative overflow-hidden bg-[#C9D2E3]">
-            <CanvasStudio
-              ref={canvasStudioRef}
-              tool={tool}
-              shapeType={shapeType}
-              outlineStyle={outlineStyle}
-              fillStyle={fillStyle}
-              color={color}
-              secondaryColor={secondaryColor}
-              size={size}
-              opacity={opacity}
-              strokes={strokes}
-              onStrokesChange={handleStrokesChange}
-              onColorChange={setColor}
-              onSecondaryColorChange={setSecondaryColor}
-              onPickedColorComplete={() => setTool(lastDrawingTool)}
-              activeTemplate={activeTemplate}
-              lastClosedTemplate={lastClosedTemplate}
-              templateOpacity={templateOpacity}
-              onTemplateOpacityChange={setTemplateOpacity}
-              onClearTemplate={handleCloseTemplate}
-              zoomLevel={zoomLevel}
-              onZoomChange={setZoomLevel}
-              resetViewSignal={resetViewSignal}
-              showGrid={showGrid}
-              showRulers={showRulers}
-              mirrorMode={mirrorMode}
-              onMirrorModeChange={setMirrorMode}
-              onCanvasStrokeStart={() => {
-                if (!isRibbonPinned && isRibbonOpen) {
-                  setIsRibbonOpen(false);
-                }
-              }}
-              canvasDimensions={canvasDimensions}
-              onCanvasDimensionsChange={setCanvasDimensions}
-              isAutoFillScreen={isAutoFullScreenCanvas}
-              onManualCanvasResize={() => setIsAutoFullScreenCanvas(false)}
-              onCursorPositionChange={setCursorPosition}
-              onSelectionSizeChange={setSelectionSize}
-              onHasSelectionChange={setHasSelection}
-              onClipboardChange={setCanPaste}
-              onNotify={(msg) => showToast(msg)}
-            />
+          {/* Main Pale Blue-Grey Workspace & Layers Sidebar */}
+          <main className="flex-1 min-h-0 w-full flex flex-row items-stretch relative overflow-hidden bg-[#C9D2E3]">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col relative overflow-hidden">
+              <CanvasStudio
+                ref={canvasStudioRef}
+                tool={tool}
+                shapeType={shapeType}
+                outlineStyle={outlineStyle}
+                fillStyle={fillStyle}
+                color={color}
+                secondaryColor={secondaryColor}
+                size={size}
+                opacity={opacity}
+                strokes={strokes}
+                onStrokesChange={handleStrokesChange}
+                layers={layers}
+                activeLayerId={activeLayerId}
+                onColorChange={setColor}
+                onSecondaryColorChange={setSecondaryColor}
+                onPickedColorComplete={() => setTool(lastDrawingTool)}
+                activeTemplate={activeTemplate}
+                lastClosedTemplate={lastClosedTemplate}
+                templateOpacity={templateOpacity}
+                onTemplateOpacityChange={setTemplateOpacity}
+                onClearTemplate={handleCloseTemplate}
+                zoomLevel={zoomLevel}
+                onZoomChange={setZoomLevel}
+                resetViewSignal={resetViewSignal}
+                showGrid={showGrid}
+                showRulers={showRulers}
+                mirrorMode={mirrorMode}
+                onMirrorModeChange={setMirrorMode}
+                onCanvasStrokeStart={() => {
+                  if (!isRibbonPinned && isRibbonOpen) {
+                    setIsRibbonOpen(false);
+                  }
+                }}
+                canvasDimensions={canvasDimensions}
+                onCanvasDimensionsChange={setCanvasDimensions}
+                isAutoFillScreen={isAutoFullScreenCanvas}
+                onManualCanvasResize={() => setIsAutoFullScreenCanvas(false)}
+                onCursorPositionChange={setCursorPosition}
+                onSelectionSizeChange={setSelectionSize}
+                onHasSelectionChange={setHasSelection}
+                onClipboardChange={setCanPaste}
+                onNotify={(msg) => showToast(msg)}
+              />
+            </div>
+
+            {showLayersSidebar && (
+              <LayersSidebar
+                layers={layers}
+                activeLayerId={activeLayerId}
+                strokes={strokes}
+                canvasDimensions={canvasDimensions}
+                onSelectLayer={setActiveLayerId}
+                onAddLayer={handleAddLayer}
+                onToggleVisibility={handleToggleLayerVisibility}
+                onMoveLayer={handleMoveLayer}
+                onReorderLayer={handleReorderLayer}
+                onDeleteLayer={handleDeleteLayer}
+                onRenameLayer={handleRenameLayer}
+                onLayerOpacityChange={handleLayerOpacityChange}
+                onCloseSidebar={() => setShowLayersSidebar(false)}
+              />
+            )}
           </main>
 
           {/* Bottom Windows Paint Status Bar */}
@@ -938,6 +1043,7 @@ export default function App() {
             isOpen={isSaveModalOpen}
             onClose={() => setIsSaveModalOpen(false)}
             strokes={strokes}
+            layers={layers}
             activeTemplate={activeTemplate}
             onSaveToGallery={handleSaveToGallery}
             canvasDimensions={canvasDimensions}

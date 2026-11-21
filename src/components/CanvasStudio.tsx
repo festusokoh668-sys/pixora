@@ -17,8 +17,11 @@ import {
   FlipHorizontal,
   FlipVertical,
   GripVertical,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import {
+  CanvasLayer,
   DrawingTemplate,
   LayerFilterType,
   MirrorMode,
@@ -43,6 +46,11 @@ import {
   renderStrokeToContext,
   preloadStrokeRasterImage,
 } from '../utils/drawing';
+import {
+  createInitialLayers,
+  groupStrokesByLayer,
+  resolveStrokeLayerId,
+} from '../utils/layers';
 import { rgbToHex } from '../utils/color';
 import {
   clampZoom,
@@ -83,6 +91,8 @@ interface CanvasStudioProps {
   paintFinish?: PaintFinish;
   strokes: Stroke[];
   onStrokesChange: (newStrokes: Stroke[]) => void;
+  layers?: CanvasLayer[];
+  activeLayerId?: string;
   onColorChange?: (hex: string) => void;
   onSecondaryColorChange?: (hex: string) => void;
   onPickedColorComplete?: () => void;
@@ -125,6 +135,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       paintFinish,
       strokes,
       onStrokesChange,
+      layers: layersProp,
+      activeLayerId: activeLayerIdProp,
       onColorChange,
       onSecondaryColorChange,
       onPickedColorComplete,
@@ -231,6 +243,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
     const [draggingSymmetryAxis, setDraggingSymmetryAxis] = useState<
       'vertical' | 'horizontal' | null
     >(null);
+    const [isSymmetryLocked, setIsSymmetryLocked] = useState<boolean>(false);
     const symmetryAxisCenter = {
       x: Math.round(symmetryAxisRatio.x * canvasDimensions.width * 10) / 10,
       y: Math.round(symmetryAxisRatio.y * canvasDimensions.height * 10) / 10,
@@ -255,9 +268,26 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
     const pinchStartScrollRef = useRef<{ left: number; top: number }>({ left: 0, top: 0 });
     const isPinchingRef = useRef<boolean>(false);
 
+    // Multi-layer normalized state
+    const effectiveLayers = React.useMemo(
+      () => (layersProp && layersProp.length > 0 ? layersProp : createInitialLayers()),
+      [layersProp]
+    );
+    const effectiveActiveLayer = React.useMemo(
+      () =>
+        effectiveLayers.find((l) => l.id === activeLayerIdProp) ??
+        effectiveLayers[effectiveLayers.length - 1],
+      [effectiveLayers, activeLayerIdProp]
+    );
+    const effectiveActiveLayerId = effectiveActiveLayer.id;
+
     // Offscreen layers
     const strokesCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const baseCompositeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const layerTempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const belowLayersCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const activeLayerCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const aboveLayersCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
     const setZoomLevel = useCallback(
       (nextOrUpdater: number | ((prev: number) => number)) => {
@@ -296,6 +326,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
     const handleSymmetryGuidePointerDown = useCallback(
       (axis: 'vertical' | 'horizontal', e: React.PointerEvent<HTMLDivElement>) => {
+        if (isSymmetryLocked) return;
         e.preventDefault();
         e.stopPropagation();
         try {
@@ -303,12 +334,12 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         } catch {}
         setDraggingSymmetryAxis(axis);
       },
-      []
+      [isSymmetryLocked]
     );
 
     const handleSymmetryGuidePointerMove = useCallback(
       (axis: 'vertical' | 'horizontal', e: React.PointerEvent<HTMLDivElement>) => {
-        if (draggingSymmetryAxis !== axis || !canvasRef.current) return;
+        if (isSymmetryLocked || draggingSymmetryAxis !== axis || !canvasRef.current) return;
         e.preventDefault();
         e.stopPropagation();
         const rect = canvasRef.current.getBoundingClientRect();
@@ -321,7 +352,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           setSymmetryAxisRatio((prev) => ({ ...prev, y: nextY }));
         }
       },
-      [draggingSymmetryAxis]
+      [draggingSymmetryAxis, isSymmetryLocked]
     );
 
     const handleSymmetryGuidePointerUp = useCallback(
@@ -483,50 +514,100 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       renderStrokeToContext(ctx, stroke, 'canvas');
     }, []);
 
-    // Rebuild base composite whenever committed strokes or dimensions change
+    // Rebuild multi-layer composite whenever committed strokes, layers, or dimensions change
     const rebuildBaseComposite = useCallback(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      if (!strokesCanvasRef.current) {
-        strokesCanvasRef.current = document.createElement('canvas');
-      }
-      const strokesCanvas = strokesCanvasRef.current;
-      if (strokesCanvas.width !== canvas.width || strokesCanvas.height !== canvas.height) {
-        strokesCanvas.width = canvas.width;
-        strokesCanvas.height = canvas.height;
-      }
+      const ensureBuffer = (refObj: React.MutableRefObject<HTMLCanvasElement | null>) => {
+        if (!refObj.current) {
+          refObj.current = document.createElement('canvas');
+        }
+        const buf = refObj.current;
+        if (buf.width !== canvas.width || buf.height !== canvas.height) {
+          buf.width = canvas.width;
+          buf.height = canvas.height;
+        }
+        return buf;
+      };
+
+      const strokesCanvas = ensureBuffer(strokesCanvasRef);
       const strokesCtx = strokesCanvas.getContext('2d', { willReadFrequently: true });
       if (!strokesCtx) return;
+
+      const layerTempCanvas = ensureBuffer(layerTempCanvasRef);
+      const layerTempCtx = layerTempCanvas.getContext('2d', { willReadFrequently: true });
+      const belowCanvas = ensureBuffer(belowLayersCanvasRef);
+      const belowCtx = belowCanvas.getContext('2d', { willReadFrequently: true });
+      const activeCanvas = ensureBuffer(activeLayerCanvasRef);
+      const activeCtx = activeCanvas.getContext('2d', { willReadFrequently: true });
+      const aboveCanvas = ensureBuffer(aboveLayersCanvasRef);
+      const aboveCtx = aboveCanvas.getContext('2d', { willReadFrequently: true });
 
       // Ensure any raster patch images trigger a clean repaint once decoded
       for (const stroke of strokes) {
         if ((stroke.operation === 'paste-image' || stroke.operation === 'replace-bitmap') && stroke.rasterDataUrl) {
-          const cached = preloadStrokeRasterImage(stroke.rasterDataUrl, () => {
+          preloadStrokeRasterImage(stroke.rasterDataUrl, () => {
             requestAnimationFrame(() => rebuildBaseComposite());
           });
-          if (!cached) {
-            // image still decoding async
+        }
+      }
+
+      const resetBuf = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.clearRect(0, 0, w, h);
+      };
+
+      resetBuf(strokesCtx, canvas.width, canvas.height);
+      if (belowCtx) resetBuf(belowCtx, canvas.width, canvas.height);
+      if (activeCtx) resetBuf(activeCtx, canvas.width, canvas.height);
+      if (aboveCtx) resetBuf(aboveCtx, canvas.width, canvas.height);
+
+      const strokesByLayer = groupStrokesByLayer(strokes, effectiveLayers);
+      const activeIdx = effectiveLayers.findIndex((l) => l.id === effectiveActiveLayerId);
+      let anyVisibleInk = false;
+
+      for (let i = 0; i < effectiveLayers.length; i++) {
+        const layer = effectiveLayers[i];
+        if (!layer.visible) continue;
+        const layerStrokes = strokesByLayer.get(layer.id) || [];
+
+        if (layerTempCtx) {
+          resetBuf(layerTempCtx, canvas.width, canvas.height);
+          for (const stroke of layerStrokes) {
+            drawStroke(layerTempCtx, stroke);
+          }
+
+          if (layerStrokes.length > 0) {
+            anyVisibleInk = true;
+            strokesCtx.save();
+            strokesCtx.globalAlpha = layer.opacity;
+            strokesCtx.globalCompositeOperation = 'source-over';
+            strokesCtx.drawImage(layerTempCanvas, 0, 0);
+            strokesCtx.restore();
+          }
+
+          if (i === activeIdx && activeCtx) {
+            activeCtx.drawImage(layerTempCanvas, 0, 0);
+          } else if (i < activeIdx && belowCtx && layerStrokes.length > 0) {
+            belowCtx.save();
+            belowCtx.globalAlpha = layer.opacity;
+            belowCtx.globalCompositeOperation = 'source-over';
+            belowCtx.drawImage(layerTempCanvas, 0, 0);
+            belowCtx.restore();
+          } else if (i > activeIdx && aboveCtx && layerStrokes.length > 0) {
+            aboveCtx.save();
+            aboveCtx.globalAlpha = layer.opacity;
+            aboveCtx.globalCompositeOperation = 'source-over';
+            aboveCtx.drawImage(layerTempCanvas, 0, 0);
+            aboveCtx.restore();
           }
         }
       }
 
-      strokesCtx.setTransform(1, 0, 0, 1, 0, 0);
-      strokesCtx.globalAlpha = 1;
-      strokesCtx.globalCompositeOperation = 'source-over';
-      strokesCtx.clearRect(0, 0, strokesCanvas.width, strokesCanvas.height);
-      for (const stroke of strokes) {
-        drawStroke(strokesCtx, stroke);
-      }
-
-      if (!baseCompositeCanvasRef.current) {
-        baseCompositeCanvasRef.current = document.createElement('canvas');
-      }
-      const baseCanvas = baseCompositeCanvasRef.current;
-      if (baseCanvas.width !== canvas.width || baseCanvas.height !== canvas.height) {
-        baseCanvas.width = canvas.width;
-        baseCanvas.height = canvas.height;
-      }
+      const baseCanvas = ensureBuffer(baseCompositeCanvasRef);
       const baseCtx = baseCanvas.getContext('2d', { willReadFrequently: true });
       if (!baseCtx) return;
 
@@ -547,7 +628,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         baseCtx.restore();
       }
 
-      if (strokes.length > 0) {
+      if (anyVisibleInk) {
         baseCtx.save();
         baseCtx.globalCompositeOperation = 'source-over';
         baseCtx.drawImage(strokesCanvas, 0, 0);
@@ -571,7 +652,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = 'source-over';
-        if (strokes.length === 0 && !(activeTemplate && showTemplateGuide && loadedTemplateImage)) {
+        if (!anyVisibleInk && !(activeTemplate && showTemplateGuide && loadedTemplateImage)) {
           ctx.fillStyle = '#FFFFFF';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         } else {
@@ -580,13 +661,23 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         }
         ctx.restore();
       }
-    }, [strokes, activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, canvasDimensions, drawStroke]);
+    }, [
+      strokes,
+      effectiveLayers,
+      effectiveActiveLayerId,
+      activeTemplate,
+      showTemplateGuide,
+      loadedTemplateImage,
+      templateOpacity,
+      canvasDimensions,
+      drawStroke,
+    ]);
 
     useEffect(() => {
       rebuildBaseComposite();
-    }, [strokes, canvasDimensions, rebuildBaseComposite]);
+    }, [strokes, effectiveLayers, effectiveActiveLayerId, canvasDimensions, rebuildBaseComposite]);
 
-    // Real-time active stroke preview (with live jitter smoothing + live Mirror mode!)
+    // Real-time active stroke preview (with live jitter smoothing, live Symmetry, and accurate Layer z-order!)
     const renderActiveStroke = useCallback(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -649,7 +740,28 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         }
       );
 
-      if (previewStroke.tool === 'eraser') {
+      // Composite active layer isolated in its temp buffer so Eraser never cuts layers beneath or above
+      const layerTemp = layerTempCanvasRef.current;
+      const activeBuf = activeLayerCanvasRef.current;
+      const belowBuf = belowLayersCanvasRef.current;
+      const aboveBuf = aboveLayersCanvasRef.current;
+
+      if (layerTemp && activeBuf && belowBuf && aboveBuf) {
+        const ltCtx = layerTemp.getContext('2d', { willReadFrequently: true });
+        if (ltCtx) {
+          ltCtx.setTransform(1, 0, 0, 1, 0, 0);
+          ltCtx.globalAlpha = 1;
+          ltCtx.globalCompositeOperation = 'source-over';
+          ltCtx.clearRect(0, 0, layerTemp.width, layerTemp.height);
+          ltCtx.drawImage(activeBuf, 0, 0);
+          for (const strokeVariant of activeStrokes) {
+            drawStroke(ltCtx, strokeVariant);
+          }
+        }
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -664,23 +776,44 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           ctx.restore();
         }
 
-        if (strokesCanvasRef.current) {
+        ctx.drawImage(belowBuf, 0, 0);
+        if (effectiveActiveLayer.visible) {
           ctx.save();
-          ctx.drawImage(strokesCanvasRef.current, 0, 0);
-          for (const strokeVariant of activeStrokes) {
-            drawStroke(ctx, strokeVariant);
-          }
+          ctx.globalAlpha = effectiveActiveLayer.opacity;
+          ctx.drawImage(layerTemp, 0, 0);
           ctx.restore();
         }
-      } else {
-        if (baseCanvas) {
-          ctx.drawImage(baseCanvas, 0, 0);
+        ctx.drawImage(aboveBuf, 0, 0);
+
+        if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
+          const imgW = loadedTemplateImage.naturalWidth || loadedTemplateImage.width || canvas.width;
+          const imgH = loadedTemplateImage.naturalHeight || loadedTemplateImage.height || canvas.height;
+          const drawRect = getContainDrawRect(imgW, imgH, canvas.width, canvas.height);
+          ctx.save();
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.globalAlpha = Math.min(1.0, templateOpacity * 1.25);
+          ctx.drawImage(loadedTemplateImage, drawRect.x, drawRect.y, drawRect.width, drawRect.height);
+          ctx.restore();
         }
-        for (const strokeVariant of activeStrokes) {
-          drawStroke(ctx, strokeVariant);
-        }
+        return;
       }
-    }, [activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, symmetryMode, symmetryAxisRatio, drawStroke]);
+
+      if (baseCanvas) {
+        ctx.drawImage(baseCanvas, 0, 0);
+      }
+      for (const strokeVariant of activeStrokes) {
+        drawStroke(ctx, strokeVariant);
+      }
+    }, [
+      activeTemplate,
+      showTemplateGuide,
+      loadedTemplateImage,
+      templateOpacity,
+      symmetryMode,
+      symmetryAxisRatio,
+      effectiveActiveLayer,
+      drawStroke,
+    ]);
 
     // Capture a raster dataUrl of the user canvas + white paper for selection/crop/rotate ops
     const captureCompositeRegion = useCallback(
@@ -978,19 +1111,28 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           img.src = srcUrl;
         },
         applyFilter: (filter) => {
-          if (strokes.length === 0 && (filter !== 'invert' || Boolean(activeTemplate))) {
-            onNotify?.('Draw something on the canvas before applying a filter');
+          const width = canvasDimensions.width;
+          const height = canvasDimensions.height;
+          const activeLayerStrokes = strokes.filter(
+            (s) => resolveStrokeLayerId(s, effectiveLayers) === effectiveActiveLayerId
+          );
+
+          if (activeLayerStrokes.length === 0 && (filter !== 'invert' || Boolean(activeTemplate))) {
+            onNotify?.(`Draw something on ${effectiveActiveLayer.name} before applying a filter`);
             return;
           }
 
-          const width = canvasDimensions.width;
-          const height = canvasDimensions.height;
-
-          let strokesCanvas = strokesCanvasRef.current;
-          if (!strokesCanvas) {
-            strokesCanvas = document.createElement('canvas');
-            strokesCanvas.width = width;
-            strokesCanvas.height = height;
+          let sourceLayerCanvas = activeLayerCanvasRef.current;
+          if (!sourceLayerCanvas || !effectiveActiveLayer.visible) {
+            sourceLayerCanvas = document.createElement('canvas');
+            sourceLayerCanvas.width = width;
+            sourceLayerCanvas.height = height;
+            const sctx = sourceLayerCanvas.getContext('2d');
+            if (sctx) {
+              for (const s of activeLayerStrokes) {
+                renderStrokeToContext(sctx, s, 'canvas');
+              }
+            }
           }
 
           const filteredCanvas = document.createElement('canvas');
@@ -999,14 +1141,16 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           const fctx = filteredCanvas.getContext('2d');
           if (!fctx) return;
 
-          applyLayerFilterToContext(fctx, strokesCanvas, width, height, filter, {
-            opaquePaperBackground: filter === 'invert' && !activeTemplate,
+          applyLayerFilterToContext(fctx, sourceLayerCanvas, width, height, filter, {
+            opaquePaperBackground:
+              filter === 'invert' && !activeTemplate && effectiveLayers[0]?.id === effectiveActiveLayerId,
           });
 
           const filteredDataUrl = filteredCanvas.toDataURL('image/png');
           const spec = getLayerFilterSpec(filter);
           const filterOp: Stroke = {
             id: `op_filter_${filter}_${Date.now()}`,
+            layerId: effectiveActiveLayerId,
             tool: 'select',
             color: '#000000',
             size: 1,
@@ -1018,8 +1162,11 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           };
 
           const commitFiltered = () => {
-            onStrokesChange([filterOp]);
-            onNotify?.(`Applied ${spec.label} filter to drawing layer`);
+            const otherLayerStrokes = strokes.filter(
+              (s) => resolveStrokeLayerId(s, effectiveLayers) !== effectiveActiveLayerId
+            );
+            onStrokesChange([...otherLayerStrokes, filterOp]);
+            onNotify?.(`Applied ${spec.label} filter to ${effectiveActiveLayer.name}`);
           };
 
           const preloaded = preloadStrokeRasterImage(filteredDataUrl, commitFiltered);
@@ -1051,6 +1198,9 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         canvasDimensions,
         selectionRect,
         strokes,
+        effectiveLayers,
+        effectiveActiveLayer,
+        effectiveActiveLayerId,
         secondaryColor,
         captureCompositeRegion,
         onStrokesChange,
@@ -1069,6 +1219,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         const fontSize = Math.max(14, Math.round(size * 2.4));
         const textStroke: Stroke = {
           id: `stroke_txt_${Date.now()}`,
+          layerId: effectiveActiveLayerId,
           tool: 'text',
           color,
           size,
@@ -1081,7 +1232,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         onStrokesChange([...strokes, textStroke]);
       }
       setActiveTextBox(null);
-    }, [activeTextBox, color, size, opacity, strokes, onStrokesChange]);
+    }, [activeTextBox, color, size, opacity, strokes, effectiveActiveLayerId, onStrokesChange]);
 
     // Auto-commit pending text or polygon when switching tools
     useEffect(() => {
@@ -1367,6 +1518,12 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         return;
       }
 
+      // Guard against drawing directly onto a hidden layer (picker/magnifier already returned above; allow select)
+      if (!effectiveActiveLayer.visible && tool !== 'select') {
+        onNotify?.(`"${effectiveActiveLayer.name}" is hidden — toggle its eye icon to draw`);
+        return;
+      }
+
       // 3. TEXT TOOL
       if (tool === 'text') {
         if (activeTextBox) {
@@ -1426,15 +1583,18 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
       // 5. PAINT BUCKET FLOOD FILL
       if (tool === 'bucket') {
-        const fillStroke = createStroke(
-          'bucket',
-          activeStrokeColor,
-          size,
-          opacity,
-          pt,
-          colorEnd || undefined,
-          paintFinish
-        );
+        const fillStroke: Stroke = {
+          ...createStroke(
+            'bucket',
+            activeStrokeColor,
+            size,
+            opacity,
+            pt,
+            colorEnd || undefined,
+            paintFinish
+          ),
+          layerId: effectiveActiveLayerId,
+        };
         const fillStrokes = createMirroredStrokes(
           fillStroke,
           symmetryMode,
@@ -1472,6 +1632,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           if (!polygonDraftRef.current) {
             polygonDraftRef.current = {
               id: `stroke_poly_${Date.now()}`,
+              layerId: effectiveActiveLayerId,
               tool: 'shape',
               shapeType: 'polygon',
               outlineStyle,
@@ -1513,6 +1674,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         // 6c. Standard click-and-drag shape
         const newShapeStroke: Stroke = {
           id: `stroke_shp_${Date.now()}`,
+          layerId: effectiveActiveLayerId,
           tool: 'shape',
           shapeType,
           outlineStyle,
@@ -1536,15 +1698,18 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
       const pressure = typeof e.nativeEvent.pressure === 'number' && e.nativeEvent.pressure > 0 ? e.nativeEvent.pressure : 0.5;
       const firstPt: Point = { ...pt, pressure };
-      const newStroke = createStroke(
-        tool,
-        activeStrokeColor,
-        size,
-        opacity,
-        firstPt,
-        colorEnd || undefined,
-        paintFinish
-      );
+      const newStroke: Stroke = {
+        ...createStroke(
+          tool,
+          activeStrokeColor,
+          size,
+          opacity,
+          firstPt,
+          colorEnd || undefined,
+          paintFinish
+        ),
+        layerId: effectiveActiveLayerId,
+      };
       currentStrokeRef.current = newStroke;
       isDrawingRef.current = true;
       renderActiveStroke();
@@ -2471,6 +2636,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                         onPointerUp={handleSymmetryGuidePointerUp}
                         onPointerCancel={handleSymmetryGuidePointerUp}
                         onKeyDown={(e) => {
+                          if (isSymmetryLocked) return;
                           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                             e.preventDefault();
                             e.stopPropagation();
@@ -2482,12 +2648,19 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                           }
                         }}
                         onDoubleClick={(e) => {
+                          if (isSymmetryLocked) return;
                           e.stopPropagation();
                           setSymmetryAxisRatio((prev) => ({ ...prev, x: 0.5 }));
                           onNotify?.('Vertical symmetry axis centered');
                         }}
-                        title="Drag left or right to move vertical symmetry axis · Double-click to center"
-                        className={`pointer-events-auto absolute top-2 left-1/2 -translate-x-1/2 px-1.5 py-0.5 flex items-center gap-1 text-[10px] font-medium border shadow-sm cursor-ew-resize select-none whitespace-nowrap ${
+                        title={
+                          isSymmetryLocked
+                            ? 'Vertical symmetry axis locked'
+                            : 'Drag left or right to move vertical symmetry axis · Double-click to center'
+                        }
+                        className={`${
+                          isSymmetryLocked ? 'pointer-events-none opacity-85' : 'pointer-events-auto cursor-ew-resize'
+                        } absolute top-2 left-1/2 -translate-x-1/2 px-1.5 py-0.5 flex items-center gap-1 text-[10px] font-medium border shadow-sm select-none whitespace-nowrap ${
                           draggingSymmetryAxis === 'vertical'
                             ? 'bg-[#1979CA] text-white border-[#0F548F]'
                             : 'bg-[#F5F6F7]/95 text-[#1E304B] border-[#7DA2CE] hover:bg-[#E5F1FB]'
@@ -2527,6 +2700,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                         onPointerUp={handleSymmetryGuidePointerUp}
                         onPointerCancel={handleSymmetryGuidePointerUp}
                         onKeyDown={(e) => {
+                          if (isSymmetryLocked) return;
                           if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                             e.preventDefault();
                             e.stopPropagation();
@@ -2538,12 +2712,19 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                           }
                         }}
                         onDoubleClick={(e) => {
+                          if (isSymmetryLocked) return;
                           e.stopPropagation();
                           setSymmetryAxisRatio((prev) => ({ ...prev, y: 0.5 }));
                           onNotify?.('Horizontal symmetry axis centered');
                         }}
-                        title="Drag up or down to move horizontal symmetry axis · Double-click to center"
-                        className={`pointer-events-auto absolute left-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 flex items-center gap-1 text-[10px] font-medium border shadow-sm cursor-ns-resize select-none whitespace-nowrap ${
+                        title={
+                          isSymmetryLocked
+                            ? 'Horizontal symmetry axis locked'
+                            : 'Drag up or down to move horizontal symmetry axis · Double-click to center'
+                        }
+                        className={`${
+                          isSymmetryLocked ? 'pointer-events-none opacity-85' : 'pointer-events-auto cursor-ns-resize'
+                        } absolute left-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 flex items-center gap-1 text-[10px] font-medium border shadow-sm select-none whitespace-nowrap ${
                           draggingSymmetryAxis === 'horizontal'
                             ? 'bg-[#1979CA] text-white border-[#0F548F]'
                             : 'bg-[#F5F6F7]/95 text-[#1E304B] border-[#7DA2CE] hover:bg-[#E5F1FB]'
@@ -2555,6 +2736,17 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                         </span>
                       </div>
                     </div>
+                  )}
+
+                  {symmetryMode === 'quad' && (
+                    <div
+                      data-testid="symmetry-quad-origin"
+                      className="absolute w-2.5 h-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 border-[#1979CA] pointer-events-none"
+                      style={{
+                        left: `${symmetryAxisRatio.x * 100}%`,
+                        top: `${symmetryAxisRatio.y * 100}%`,
+                      }}
+                    />
                   )}
 
                   {/* Quick On-Canvas Axis Mode & Center Controls */}
@@ -2613,6 +2805,25 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                       title="Reset symmetry axis to exact canvas center"
                     >
                       Center
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="symmetry-lock-btn"
+                      aria-pressed={isSymmetryLocked}
+                      onClick={() => {
+                        const next = !isSymmetryLocked;
+                        setIsSymmetryLocked(next);
+                        onNotify?.(next ? 'Symmetry axis locked' : 'Symmetry axis unlocked');
+                      }}
+                      className={`px-1.5 py-0.5 border flex items-center gap-1 cursor-pointer ${
+                        isSymmetryLocked
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                          : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                      }`}
+                      title="Lock axis position so strokes near the guide do not move it"
+                    >
+                      {isSymmetryLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                      <span>{isSymmetryLocked ? 'Locked' : 'Lock'}</span>
                     </button>
                     <button
                       type="button"

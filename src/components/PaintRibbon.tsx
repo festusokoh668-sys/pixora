@@ -94,6 +94,8 @@ export interface PaintRibbonProps {
   onToggleRulers: () => void;
   showStatusBar: boolean;
   onToggleStatusBar: () => void;
+  showLayersSidebar?: boolean;
+  onToggleLayersSidebar?: () => void;
   onToggleFullScreen: () => void;
   activeTemplate: DrawingTemplate | null;
   lastClosedTemplate?: DrawingTemplate | null;
@@ -179,6 +181,8 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onToggleRulers,
   showStatusBar,
   onToggleStatusBar,
+  showLayersSidebar = true,
+  onToggleLayersSidebar,
   onToggleFullScreen,
   activeTemplate,
   lastClosedTemplate,
@@ -828,6 +832,18 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     />
                     <span>Status bar</span>
                   </label>
+                  {onToggleLayersSidebar && (
+                    <label className="flex items-center gap-1.5 cursor-pointer" title="Show or hide Layers sidebar">
+                      <input
+                        type="checkbox"
+                        data-testid="ribbon-toggle-layers-checkbox"
+                        checked={showLayersSidebar}
+                        onChange={onToggleLayersSidebar}
+                        className="accent-[#1979CA]"
+                      />
+                      <span>Layers</span>
+                    </label>
+                  )}
                 </div>
                 <span className="text-[11px] text-[#666666] text-center leading-none">Show or hide</span>
               </div>

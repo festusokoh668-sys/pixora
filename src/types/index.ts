@@ -76,8 +76,16 @@ export interface RectBounds {
   height: number;
 }
 
+export interface CanvasLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+  opacity: number;
+}
+
 export interface Stroke {
   id: string;
+  layerId?: string;
   tool: ToolType;
   color: string;
   size: number;
@@ -91,6 +99,8 @@ export interface Stroke {
   outlineStyle?: ShapeOutlineStyle;
   fillStyle?: ShapeFillStyle;
   fillColor?: string;
+  flipH?: boolean;
+  flipV?: boolean;
   // Text annotation properties (tool === 'text')
   text?: string;
   fontSize?: number;
