@@ -33,7 +33,7 @@ import {
   ToolType,
 } from '../types';
 import { PAINT_SHAPES, QUICK_SHAPES } from '../utils/shapes';
-import { toggleMirrorAxis } from '../utils/drawing';
+import { toggleMirrorAxis, resolveSymmetryToggle } from '../utils/drawing';
 import {
   BRUSH_OPTIONS,
   RecentBrushSetting,
@@ -70,6 +70,7 @@ export interface PaintRibbonProps {
   onExportFormat?: (format: 'jpg' | 'png' | 'svg') => void;
   onPrint: () => void;
   onMinimizeWindow?: () => void;
+  onClearPage?: () => void;
   onExitStudio?: () => void;
   onCut: () => void;
   onCopy: () => void;
@@ -155,6 +156,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onExportFormat,
   onPrint,
   onMinimizeWindow,
+  onClearPage,
   onExitStudio,
   onCut,
   onCopy,
@@ -211,6 +213,13 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
 
   const ribbonRef = useRef<HTMLDivElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const lastSymmetryAxisRef = useRef<Exclude<MirrorMode, 'none'>>('horizontal');
+
+  useEffect(() => {
+    if (mirrorMode !== 'none') {
+      lastSymmetryAxisRef.current = mirrorMode;
+    }
+  }, [mirrorMode]);
 
   // Track last 5 used brush settings (brush type + size + primary color)
   useEffect(() => {
@@ -314,7 +323,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
     <div
       ref={ribbonRef}
       data-testid="paint-ribbon"
-      className="bg-[#FFFFFF] text-[#1E1E1E] select-none font-sans relative z-30 shrink-0"
+      className="bg-[#FFFFFF] text-[#1E1E1E] select-none font-sans relative z-40 shrink-0"
     >
       {/* Hidden File Input for Open/Import Image */}
       <input
@@ -432,6 +441,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
           </button>
           <button
             type="button"
+            data-testid="window-maximize-btn"
             onClick={onToggleFullScreen}
             className="w-[42px] h-full flex items-center justify-center hover:bg-[#E5E5E5] text-[#1E1E1E] cursor-pointer transition-colors"
             title="Maximize / Restore"
@@ -441,10 +451,19 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => (onExitStudio ? onExitStudio() : onNew())}
+            data-testid="window-close-btn"
+            onClick={() => {
+              if (onClearPage) {
+                onClearPage();
+              } else if (onExitStudio) {
+                onExitStudio();
+              } else {
+                onNew();
+              }
+            }}
             className="w-[42px] h-full flex items-center justify-center hover:bg-[#E81123] hover:text-white text-[#1E1E1E] cursor-pointer transition-colors text-[13px]"
-            title="Return to Welcome Screen"
-            aria-label="Close"
+            title="Clear page"
+            aria-label="Clear page"
           >
             ✕
           </button>
@@ -554,9 +573,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
 
           <button
             type="button"
+            data-testid="ribbon-help-btn"
             onClick={onOpenHelp}
             className="w-4 h-4 rounded-full bg-[#1979CA] hover:bg-[#1464A8] text-white flex items-center justify-center text-[10px] font-bold cursor-pointer ml-0.5"
-            title="Paint Help & Color Tips"
+            title="Paint Help, Keyboard Shortcuts & Color Tips"
             aria-label="Help"
           >
             ?
@@ -576,10 +596,13 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               setActiveDropdown(null);
               onNew();
             }}
-            className="w-full px-3 py-2 flex items-center gap-3 hover:bg-[#E5F1FB] text-left cursor-pointer"
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
           >
-            <FileText className="w-4 h-4 text-[#1979CA]" />
-            <span>New</span>
+            <span className="flex items-center gap-3">
+              <FileText className="w-4 h-4 text-[#1979CA]" />
+              <span>New</span>
+            </span>
+            <span className="text-[10px] text-[#666666] font-mono">Alt+N</span>
           </button>
           <button
             type="button"
@@ -587,10 +610,13 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               setActiveDropdown(null);
               onOpen();
             }}
-            className="w-full px-3 py-2 flex items-center gap-3 hover:bg-[#E5F1FB] text-left cursor-pointer"
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
           >
-            <FolderOpen className="w-4 h-4 text-[#D49B27]" />
-            <span>Open Paint Book</span>
+            <span className="flex items-center gap-3">
+              <FolderOpen className="w-4 h-4 text-[#D49B27]" />
+              <span>Open Paint Book</span>
+            </span>
+            <span className="text-[10px] text-[#666666] font-mono">Ctrl+O</span>
           </button>
           {onUploadImage && (
             <button
@@ -626,10 +652,13 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               setActiveDropdown(null);
               onSave();
             }}
-            className="w-full px-3 py-2 flex items-center gap-3 hover:bg-[#E5F1FB] text-left cursor-pointer"
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
           >
-            <Save className="w-4 h-4 text-[#635BA2]" />
-            <span>Save / Save As (JPG, PNG, or SVG)</span>
+            <span className="flex items-center gap-3">
+              <Save className="w-4 h-4 text-[#635BA2]" />
+              <span>Save / Save As</span>
+            </span>
+            <span className="text-[10px] text-[#666666] font-mono">Ctrl+S</span>
           </button>
           {onExportFormat && (
             <>
@@ -692,10 +721,13 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               setActiveDropdown(null);
               onPrint();
             }}
-            className="w-full px-3 py-2 flex items-center gap-3 hover:bg-[#E5F1FB] text-left cursor-pointer"
+            className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#E5F1FB] text-left cursor-pointer"
           >
-            <Printer className="w-4 h-4 text-[#555555]" />
-            <span>Print</span>
+            <span className="flex items-center gap-3">
+              <Printer className="w-4 h-4 text-[#555555]" />
+              <span>Print</span>
+            </span>
+            <span className="text-[10px] text-[#666666] font-mono">Ctrl+P</span>
           </button>
           <div className="my-1 border-t border-[#E0E1E2]" />
           <button
@@ -728,7 +760,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     type="button"
                     onClick={onZoomIn}
                     className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
-                    title="Zoom in"
+                    title="Zoom in (Ctrl++)"
                   >
                     <ZoomIn className="w-6 h-6 text-[#1979CA]" />
                     <span className="text-[11px] leading-tight mt-0.5 text-center">Zoom<br />in</span>
@@ -737,7 +769,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     type="button"
                     onClick={onZoomOut}
                     className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
-                    title="Zoom out"
+                    title="Zoom out (Ctrl+-)"
                   >
                     <ZoomOut className="w-6 h-6 text-[#1979CA]" />
                     <span className="text-[11px] leading-tight mt-0.5 text-center">Zoom<br />out</span>
@@ -746,7 +778,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     type="button"
                     onClick={onResetZoom}
                     className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
-                    title="100% actual pixel size"
+                    title="100% actual pixel size (Ctrl+0)"
                   >
                     <span className="w-6 h-6 flex items-center justify-center font-bold text-[#1979CA] text-[12px]">
                       100%
@@ -769,7 +801,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               {/* Show or hide Group */}
               <div className="flex flex-col justify-between h-full px-3 border-r border-[#E0E1E2] shrink-0">
                 <div className="flex flex-col justify-center gap-1 pt-0.5 text-[11px]">
-                  <label className="flex items-center gap-1.5 cursor-pointer">
+                  <label className="flex items-center gap-1.5 cursor-pointer" title="Show or hide pixel rulers (Alt+R)">
                     <input
                       type="checkbox"
                       checked={showRulers}
@@ -778,7 +810,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     />
                     <span>Rulers</span>
                   </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
+                  <label className="flex items-center gap-1.5 cursor-pointer" title="Show or hide gridlines (Ctrl+G)">
                     <input
                       type="checkbox"
                       checked={showGrid}
@@ -807,7 +839,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     type="button"
                     onClick={onToggleFullScreen}
                     className="flex flex-col items-center px-2.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
-                    title="Full screen"
+                    title="Full screen (F11)"
                   >
                     <Grid className="w-6 h-6 text-[#1979CA]" />
                     <span className="text-[11px] leading-tight mt-0.5 text-center">Full<br />screen</span>
@@ -816,57 +848,113 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                 <span className="text-[11px] text-[#666666] text-center leading-none">Display</span>
               </div>
 
-              {/* Symmetry / Mirror Group (Preserved Feature) */}
+              {/* Symmetry Axis Guide Group */}
               {onMirrorModeChange && (
-                <div className="flex flex-col justify-between h-full px-2.5 border-r border-[#E0E1E2] shrink-0">
-                  <div className="flex items-center gap-1 pt-1">
+                <div
+                  data-testid="view-symmetry-group"
+                  className="flex flex-col justify-between h-full px-2.5 border-r border-[#E0E1E2] shrink-0"
+                >
+                  <div className="flex items-center gap-1 pt-0.5">
                     <button
                       type="button"
-                      data-testid="ribbon-mirror-h-btn"
-                      aria-pressed={mirrorMode === 'horizontal' || mirrorMode === 'quad'}
-                      onClick={() => onMirrorModeChange(toggleMirrorAxis(mirrorMode, 'horizontal'))}
+                      data-testid="ribbon-symmetry-toggle-btn"
+                      aria-pressed={mirrorMode !== 'none'}
+                      onClick={() =>
+                        onMirrorModeChange(
+                          resolveSymmetryToggle(mirrorMode, lastSymmetryAxisRef.current)
+                        )
+                      }
                       className={`flex flex-col items-center px-2 py-1 border text-[11px] cursor-pointer ${
-                        mirrorMode === 'horizontal' || mirrorMode === 'quad'
+                        mirrorMode !== 'none'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                       }`}
-                      title="Mirror Horizontal"
+                      title="Toggle interactive Symmetry axis guide on canvas"
                     >
-                      <FlipHorizontal className="w-4 h-4 text-[#1979CA]" />
-                      <span className="mt-0.5">H-Mirror</span>
+                      <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                        <line
+                          x1="12"
+                          y1="3"
+                          x2="12"
+                          y2="21"
+                          stroke="#1979CA"
+                          strokeWidth="1.6"
+                          strokeDasharray="2.5 2"
+                        />
+                        <path
+                          d="M10 6.5C7 6.5 4.5 9 4.5 12C4.5 15 7 17.5 10 17.5"
+                          stroke="#1E304B"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M14 6.5C17 6.5 19.5 9 19.5 12C19.5 15 17 17.5 14 17.5"
+                          stroke="#1979CA"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span className="leading-tight mt-0.5 font-medium">Symmetry</span>
                     </button>
-                    <button
-                      type="button"
-                      data-testid="ribbon-mirror-v-btn"
-                      aria-pressed={mirrorMode === 'vertical' || mirrorMode === 'quad'}
-                      onClick={() => onMirrorModeChange(toggleMirrorAxis(mirrorMode, 'vertical'))}
-                      className={`flex flex-col items-center px-2 py-1 border text-[11px] cursor-pointer ${
-                        mirrorMode === 'vertical' || mirrorMode === 'quad'
-                          ? 'bg-[#D8E8FA] border-[#7DA2CE]'
-                          : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
-                      }`}
-                      title="Mirror Vertical"
-                    >
-                      <FlipVertical className="w-4 h-4 text-[#1979CA]" />
-                      <span className="mt-0.5">V-Mirror</span>
-                    </button>
+
+                    <div className="flex flex-col gap-0.5 text-[11px]">
+                      <button
+                        type="button"
+                        data-testid="ribbon-mirror-h-btn"
+                        aria-pressed={mirrorMode === 'horizontal' || mirrorMode === 'quad'}
+                        onClick={() =>
+                          onMirrorModeChange(toggleMirrorAxis(mirrorMode, 'horizontal'))
+                        }
+                        className={`flex items-center gap-1.5 px-1.5 py-0.5 border cursor-pointer ${
+                          mirrorMode === 'horizontal' || mirrorMode === 'quad'
+                            ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                            : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                        }`}
+                        title="Vertical axis guide (mirror left & right)"
+                      >
+                        <FlipHorizontal className="w-3.5 h-3.5 text-[#1979CA]" />
+                        <span>Vertical</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="ribbon-mirror-v-btn"
+                        aria-pressed={mirrorMode === 'vertical' || mirrorMode === 'quad'}
+                        onClick={() =>
+                          onMirrorModeChange(toggleMirrorAxis(mirrorMode, 'vertical'))
+                        }
+                        className={`flex items-center gap-1.5 px-1.5 py-0.5 border cursor-pointer ${
+                          mirrorMode === 'vertical' || mirrorMode === 'quad'
+                            ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                            : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                        }`}
+                        title="Horizontal axis guide (mirror top & bottom)"
+                      >
+                        <FlipVertical className="w-3.5 h-3.5 text-[#1979CA]" />
+                        <span>Horizontal</span>
+                      </button>
+                    </div>
+
                     <button
                       type="button"
                       data-testid="ribbon-mirror-quad-btn"
                       aria-pressed={mirrorMode === 'quad'}
-                      onClick={() => onMirrorModeChange(mirrorMode === 'quad' ? 'none' : 'quad')}
+                      onClick={() =>
+                        onMirrorModeChange(mirrorMode === 'quad' ? 'none' : 'quad')
+                      }
                       className={`flex flex-col items-center px-2 py-1 border text-[11px] cursor-pointer ${
                         mirrorMode === 'quad'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                       }`}
-                      title="4-Way Quad Mirror"
+                      title="4-Way Quad Symmetry (Vertical + Horizontal axes)"
                     >
-                      <span className="font-bold text-[#1979CA] text-[12px] leading-4">4x</span>
+                      <span className="font-bold text-[#1979CA] text-[12px] leading-5">4x</span>
                       <span className="mt-0.5">Quad</span>
                     </button>
                   </div>
-                  <span className="text-[11px] text-[#666666] text-center leading-none">Mirror</span>
+                  <span className="text-[11px] text-[#666666] text-center leading-none">
+                    Symmetry
+                  </span>
                 </div>
               )}
 
@@ -912,7 +1000,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       data-testid="ribbon-filter-invert-btn"
                       onClick={() => onApplyFilter('invert')}
                       className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
-                      title="Invert colors of current drawing layer"
+                      title="Invert colors of current drawing layer (Ctrl+I)"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
                         <circle cx="10" cy="10" r="7" fill="#FFFFFF" stroke="#1E1E1E" strokeWidth="1.2" />
@@ -1014,7 +1102,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                       }`}
-                      title="Select rectangular region on canvas"
+                      title="Select rectangular region on canvas (S)"
                     >
                       <svg className="w-7 h-7" viewBox="0 0 28 28" fill="none">
                         <rect
@@ -1034,7 +1122,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     </button>
 
                     {activeDropdown === 'select' && (
-                      <div className="fixed mt-0.5 z-50 w-44 bg-white border border-[#A0A0A0] shadow-md py-1 text-[11px]">
+                      <div className="fixed mt-0.5 z-50 w-52 bg-white border border-[#A0A0A0] shadow-md py-1 text-[11px]">
                         <button
                           type="button"
                           onClick={() => {
@@ -1052,9 +1140,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                             onSelectAll();
                             setActiveDropdown(null);
                           }}
-                          className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer"
+                          className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer flex items-center justify-between"
                         >
-                          Select all
+                          <span>Select all</span>
+                          <span className="text-[10px] text-[#666666] font-mono">Ctrl+A</span>
                         </button>
                         <button
                           type="button"
@@ -1062,9 +1151,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                             onClearSelection();
                             setActiveDropdown(null);
                           }}
-                          className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer"
+                          className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer flex items-center justify-between"
                         >
-                          Clear selection
+                          <span>Clear selection</span>
+                          <span className="text-[10px] text-[#666666] font-mono">Esc</span>
                         </button>
                         <button
                           type="button"
@@ -1073,9 +1163,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                             onDeleteSelection();
                             setActiveDropdown(null);
                           }}
-                          className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer disabled:opacity-40"
+                          className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer disabled:opacity-40 flex items-center justify-between"
                         >
-                          Delete selected
+                          <span>Delete selected</span>
+                          <span className="text-[10px] text-[#666666] font-mono">Del</span>
                         </button>
                       </div>
                     )}
@@ -1092,7 +1183,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           ? 'hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[#1E1E1E]'
                           : 'opacity-45 text-[#666] cursor-default'
                       }`}
-                      title="Crop canvas to current selection"
+                      title="Crop canvas to current selection (Ctrl+Shift+X)"
                     >
                       <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
                         <path d="M4 1V12H15M1 4H12V15" stroke="#1979CA" strokeWidth="1.3" />
@@ -1104,7 +1195,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       data-testid="ribbon-resize-btn"
                       onClick={onOpenResize}
                       className="flex items-center gap-1.5 px-1.5 py-0.5 text-[11px] border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[#1E1E1E] cursor-pointer"
-                      title="Resize canvas dimensions"
+                      title="Resize canvas dimensions (Ctrl+E)"
                     >
                       <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
                         <rect x="2" y="2" width="12" height="12" fill="#FFF" stroke="#666" strokeWidth="1" />
@@ -1119,7 +1210,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                         data-testid="ribbon-rotate-btn"
                         onClick={() => setActiveDropdown(activeDropdown === 'rotate' ? null : 'rotate')}
                         className="flex items-center gap-1.5 px-1.5 py-0.5 text-[11px] border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[#1E1E1E] cursor-pointer"
-                        title="Rotate or flip selection / canvas"
+                        title="Rotate or flip selection / canvas (Ctrl+R / Ctrl+F)"
                       >
                         <RotateCw className="w-3.5 h-3.5 text-[#1979CA]" />
                         <span>
@@ -1128,16 +1219,17 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       </button>
 
                       {activeDropdown === 'rotate' && (
-                        <div className="fixed mt-0.5 z-50 w-40 bg-white border border-[#A0A0A0] shadow-md py-1 text-[11px]">
+                        <div className="fixed mt-0.5 z-50 w-56 bg-white border border-[#A0A0A0] shadow-md py-1 text-[11px]">
                           <button
                             type="button"
                             onClick={() => {
                               onRotateCanvas('cw90');
                               setActiveDropdown(null);
                             }}
-                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer"
+                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer flex items-center justify-between"
                           >
-                            Rotate right 90°
+                            <span>Rotate right 90°</span>
+                            <span className="text-[10px] text-[#666666] font-mono">Ctrl+R</span>
                           </button>
                           <button
                             type="button"
@@ -1145,9 +1237,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                               onRotateCanvas('ccw90');
                               setActiveDropdown(null);
                             }}
-                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer"
+                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer flex items-center justify-between"
                           >
-                            Rotate left 90°
+                            <span>Rotate left 90°</span>
+                            <span className="text-[10px] text-[#666666] font-mono">Ctrl+Shift+R</span>
                           </button>
                           <button
                             type="button"
@@ -1166,9 +1259,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                               onRotateCanvas('flipV');
                               setActiveDropdown(null);
                             }}
-                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer"
+                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer flex items-center justify-between"
                           >
-                            Flip vertical
+                            <span>Flip vertical</span>
+                            <span className="text-[10px] text-[#666666] font-mono">Ctrl+Shift+F</span>
                           </button>
                           <button
                             type="button"
@@ -1176,9 +1270,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                               onRotateCanvas('flipH');
                               setActiveDropdown(null);
                             }}
-                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer"
+                            className="w-full px-3 py-1.5 hover:bg-[#E5F1FB] text-left cursor-pointer flex items-center justify-between"
                           >
-                            Flip horizontal
+                            <span>Flip horizontal</span>
+                            <span className="text-[10px] text-[#666666] font-mono">Ctrl+F</span>
                           </button>
                         </div>
                       )}
@@ -1240,7 +1335,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                     }`}
-                    title="Text (Insert text onto the canvas)"
+                    title="Text (T)"
                   >
                     <span className="font-serif font-bold text-[15px] text-[#1E1E1E] leading-none">
                       A
@@ -1258,7 +1353,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                     }`}
-                    title="Ruler (Toggle interactive pixel rulers along canvas edges)"
+                    title="Ruler (Alt+R)"
                     aria-label="Ruler"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
@@ -1297,7 +1392,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                     }`}
-                    title="Color picker (Sample a color from canvas)"
+                    title="Color picker (I)"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
                       <path d="M10.5 2.5L13.5 5.5L11.5 7.5L8.5 4.5L10.5 2.5Z" fill="#5A6675" />
@@ -1315,7 +1410,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                     }`}
-                    title="Magnifier (Click to zoom in, Alt/Right-click to zoom out)"
+                    title="Magnifier (M) — Click to zoom in, Alt/Right-click to zoom out"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none">
                       <circle cx="6.5" cy="6.5" r="4" fill="#E3F0FC" stroke="#4C6178" strokeWidth="1.2" />
@@ -1728,7 +1823,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     data-testid="ribbon-size-btn"
                     onClick={() => setActiveDropdown(activeDropdown === 'size' ? null : 'size')}
                     className="flex flex-col items-center px-2 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
-                    title={`Stroke size: ${currentSize}px`}
+                    title={`Stroke size: ${currentSize}px ([ / ])`}
                   >
                     <svg className="w-7 h-7" viewBox="0 0 28 28" fill="none">
                       <line x1="3" y1="6" x2="25" y2="6" stroke="#1E304B" strokeWidth="1" />

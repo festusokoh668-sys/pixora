@@ -33,6 +33,7 @@ import {
   exportStrokesToSvgString,
 } from './utils/drawing';
 import { TEMPLATES } from './data/templates';
+import { resolveKeyboardShortcut } from './utils/shortcuts';
 
 export default function App() {
   // Navigation / View State: Welcome Page as front page
@@ -174,11 +175,41 @@ export default function App() {
   };
 
   const handleConfirmClear = () => {
-    historyRef.current.pushState(strokes);
+    if (strokes.length > 0) {
+      historyRef.current.pushState(strokes);
+    }
     setStrokes([]);
+    canvasStudioRef.current?.clearCanvas();
     setIsAutoFullScreenCanvas(true);
     updateHistoryFlags();
     showToast('New blank canvas ready');
+  };
+
+  const handleClearPage = () => {
+    if (strokes.length > 0) {
+      historyRef.current.pushState(strokes);
+    }
+    setStrokes([]);
+    canvasStudioRef.current?.clearCanvas();
+    if (activeTemplate) {
+      setLastClosedTemplate(activeTemplate);
+      setActiveTemplate(null);
+    }
+    setIsWindowMinimized(false);
+    setZoomLevel(1.0);
+    setResetViewSignal((n) => n + 1);
+    setIsAutoFullScreenCanvas(true);
+    updateHistoryFlags();
+    showToast('Page cleared');
+  };
+
+  const handleMinimizeWindow = () => {
+    try {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    } catch {}
+    setIsWindowMinimized(true);
   };
 
   const handleToolSelect = (nextTool: ToolType) => {
@@ -316,49 +347,187 @@ export default function App() {
   // Desktop Windows Paint keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      if (currentView !== 'studio' || isWindowMinimized) {
         return;
       }
-      const mod = e.ctrlKey || e.metaKey;
-      const key = e.key.toLowerCase();
-      if (mod && key === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) handleRedo();
-        else handleUndo();
-      } else if (mod && key === 'y') {
-        e.preventDefault();
-        handleRedo();
-      } else if (mod && key === 's') {
-        e.preventDefault();
-        setIsSaveModalOpen(true);
-      } else if (mod && key === 'c') {
-        e.preventDefault();
-        canvasStudioRef.current?.copySelection();
-      } else if (mod && key === 'x') {
-        e.preventDefault();
-        canvasStudioRef.current?.cutSelection();
-      } else if (mod && key === 'v') {
-        e.preventDefault();
-        canvasStudioRef.current?.pasteClipboard();
-      } else if (mod && key === 'a') {
-        e.preventDefault();
-        canvasStudioRef.current?.selectAll();
-      } else if (e.ctrlKey && e.key === 'F1') {
-        e.preventDefault();
-        setIsRibbonOpen((prev) => !prev);
-      } else if (e.key === 'Delete' && hasSelection) {
-        e.preventDefault();
-        canvasStudioRef.current?.deleteSelection();
-      } else if (e.key === 'Escape') {
-        canvasStudioRef.current?.clearSelection();
-      } else if (!mod && key === 'b') {
-        handleToolSelect('brush');
-      } else if (!mod && key === 'k') {
-        handleToolSelect('bucket');
-      } else if (!mod && key === 'p') {
-        handleToolSelect('pencil');
-      } else if (!mod && key === 'e') {
-        handleToolSelect('eraser');
+
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const hasOpenModal =
+        isTemplateModalOpen ||
+        isSaveModalOpen ||
+        isGalleryModalOpen ||
+        isSparkModalOpen ||
+        isClearConfirmOpen ||
+        isResizeModalOpen ||
+        isColorsModalOpen;
+
+      if (hasOpenModal) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setIsTemplateModalOpen(false);
+          setIsSaveModalOpen(false);
+          setIsGalleryModalOpen(false);
+          setIsSparkModalOpen(false);
+          setIsClearConfirmOpen(false);
+          setIsResizeModalOpen(false);
+          setIsColorsModalOpen(false);
+        }
+        return;
+      }
+
+      const action = resolveKeyboardShortcut(e, { hasSelection });
+      if (!action) return;
+
+      e.preventDefault();
+
+      switch (action) {
+        case 'undo':
+          handleUndo();
+          break;
+        case 'redo':
+          handleRedo();
+          break;
+        case 'save':
+          setIsSaveModalOpen(true);
+          break;
+        case 'open-templates':
+          setIsTemplateModalOpen(true);
+          break;
+        case 'print':
+          window.print();
+          break;
+        case 'new-canvas':
+          if (strokes.length > 0) setIsClearConfirmOpen(true);
+          else handleConfirmClear();
+          break;
+        case 'copy':
+          canvasStudioRef.current?.copySelection();
+          break;
+        case 'cut':
+          canvasStudioRef.current?.cutSelection();
+          break;
+        case 'paste':
+          canvasStudioRef.current?.pasteClipboard();
+          break;
+        case 'select-all':
+          canvasStudioRef.current?.selectAll();
+          break;
+        case 'delete-selection':
+          canvasStudioRef.current?.deleteSelection();
+          break;
+        case 'clear-selection':
+          canvasStudioRef.current?.clearSelection();
+          break;
+        case 'crop':
+          if (hasSelection) {
+            canvasStudioRef.current?.cropToSelection();
+          } else {
+            showToast('Select a region first to crop (Ctrl+Shift+X)');
+          }
+          break;
+        case 'resize':
+          setIsResizeModalOpen(true);
+          break;
+        case 'rotate-cw':
+          canvasStudioRef.current?.rotateOrFlip('cw90');
+          showToast('Rotated right 90° (Ctrl+R)');
+          break;
+        case 'rotate-ccw':
+          canvasStudioRef.current?.rotateOrFlip('ccw90');
+          showToast('Rotated left 90° (Ctrl+Shift+R)');
+          break;
+        case 'rotate-180':
+          canvasStudioRef.current?.rotateOrFlip('180');
+          showToast('Rotated 180°');
+          break;
+        case 'flip-horizontal':
+          canvasStudioRef.current?.rotateOrFlip('flipH');
+          showToast('Flipped horizontal (Ctrl+F)');
+          break;
+        case 'flip-vertical':
+          canvasStudioRef.current?.rotateOrFlip('flipV');
+          showToast('Flipped vertical (Ctrl+Shift+F)');
+          break;
+        case 'filter-invert':
+          canvasStudioRef.current?.applyFilter('invert');
+          break;
+        case 'toggle-grid':
+          setShowGrid((prev) => {
+            const next = !prev;
+            showToast(next ? 'Gridlines shown (Ctrl+G)' : 'Gridlines hidden (Ctrl+G)');
+            return next;
+          });
+          break;
+        case 'toggle-rulers':
+          setShowRulers((prev) => {
+            const next = !prev;
+            showToast(next ? 'Rulers shown (Alt+R)' : 'Rulers hidden (Alt+R)');
+            return next;
+          });
+          break;
+        case 'toggle-ribbon':
+          setIsRibbonOpen((prev) => !prev);
+          break;
+        case 'toggle-fullscreen':
+          handleToggleFullScreen();
+          break;
+        case 'zoom-in':
+          handleZoomIn();
+          break;
+        case 'zoom-out':
+          handleZoomOut();
+          break;
+        case 'zoom-reset':
+          handleResetZoom();
+          break;
+        case 'size-decrease':
+          setSize((prev) => {
+            const next = Math.max(1, prev - 2);
+            showToast(`Size: ${next}px ([)`);
+            return next;
+          });
+          break;
+        case 'size-increase':
+          setSize((prev) => {
+            const next = Math.min(40, prev + 2);
+            showToast(`Size: ${next}px (])`);
+            return next;
+          });
+          break;
+        case 'tool-brush':
+          handleToolSelect('brush');
+          break;
+        case 'tool-pencil':
+          handleToolSelect('pencil');
+          break;
+        case 'tool-bucket':
+          handleToolSelect('bucket');
+          break;
+        case 'tool-eraser':
+          handleToolSelect('eraser');
+          break;
+        case 'tool-text':
+          handleToolSelect('text');
+          break;
+        case 'tool-picker':
+          handleToolSelect('picker');
+          break;
+        case 'tool-magnifier':
+          handleToolSelect('magnifier');
+          break;
+        case 'tool-select':
+          handleToolSelect('select');
+          break;
       }
     };
 
@@ -458,45 +627,81 @@ export default function App() {
           {isWindowMinimized && (
             <div
               data-testid="minimized-desktop-view"
-              className="flex-1 min-h-0 flex flex-col justify-between bg-gradient-to-br from-[#1C4D82] via-[#1B5EA4] to-[#0E325C] text-white select-none"
+              className="flex-1 min-h-0 flex flex-col justify-between bg-[#C9D2E3] text-[#1E1E1E] select-none"
             >
-              <div className="flex-1 flex items-center justify-center p-6">
-                <div className="bg-[#F5F6F7] text-[#1E1E1E] border border-[#A0A0A0] shadow-xl px-5 py-4 flex items-center gap-4 max-w-md w-full">
-                  <svg className="w-9 h-9 shrink-0" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M12 3C6.5 3 2 7 2 11.8C2 15.2 4.8 17.5 8 17.5C9.4 17.5 10.2 18.2 10.2 19.3C10.2 20.5 11.1 21 12.5 21C18 21 22 17 22 12C22 7 17.5 3 12 3Z"
-                      fill="#F6D57E"
-                      stroke="#8B6F29"
-                      strokeWidth="1.4"
-                    />
-                    <circle cx="7.5" cy="9.5" r="1.6" fill="#ED1C24" />
-                    <circle cx="12" cy="7.2" r="1.6" fill="#22B14C" />
-                    <circle cx="16.5" cy="9.5" r="1.6" fill="#00A2E8" />
-                    <circle cx="16.5" cy="14" r="1.6" fill="#FFF200" />
-                  </svg>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-semibold truncate">
-                      {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
-                    </div>
-                    <div className="text-[11px] text-[#555555]">
-                      Window minimized ({strokes.length} stroke{strokes.length === 1 ? '' : 's'} preserved)
-                    </div>
-                  </div>
+              {/* Workspace area with compact docked minimized Paint window bar */}
+              <div className="flex-1 flex flex-col justify-end p-3">
+                <div
+                  data-testid="minimized-window-bar"
+                  className="bg-white border border-[#8E9AA8] shadow-md h-[34px] w-full max-w-[360px] flex items-center justify-between pl-2"
+                >
                   <button
                     type="button"
                     data-testid="desktop-restore-btn"
                     onClick={() => setIsWindowMinimized(false)}
-                    className="px-3 py-1.5 bg-[#1979CA] hover:bg-[#1464A8] text-white text-[12px] font-medium cursor-pointer shrink-0"
+                    className="flex items-center gap-2 min-w-0 flex-1 h-full text-left cursor-pointer hover:bg-[#F2F6FC] px-1"
+                    title="Click to restore Pixora window"
                   >
-                    Restore
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M12 3C6.5 3 2 7 2 11.8C2 15.2 4.8 17.5 8 17.5C9.4 17.5 10.2 18.2 10.2 19.3C10.2 20.5 11.1 21 12.5 21C18 21 22 17 22 12C22 7 17.5 3 12 3Z"
+                        fill="#F6D57E"
+                        stroke="#8B6F29"
+                        strokeWidth="1.4"
+                      />
+                      <circle cx="7.5" cy="9.5" r="1.6" fill="#ED1C24" />
+                      <circle cx="12" cy="7.2" r="1.6" fill="#22B14C" />
+                      <circle cx="16.5" cy="9.5" r="1.6" fill="#00A2E8" />
+                      <circle cx="16.5" cy="14" r="1.6" fill="#FFF200" />
+                    </svg>
+                    <span className="text-[12px] font-medium truncate text-[#1E1E1E]">
+                      {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
+                    </span>
+                    <span className="text-[10px] text-[#666666] shrink-0">
+                      ({strokes.length})
+                    </span>
                   </button>
+
+                  <div className="flex items-center h-full shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsWindowMinimized(false)}
+                      className="w-[34px] h-full flex items-center justify-center bg-[#E5F1FB] border-l border-[#DADBDC] hover:bg-[#CCE4F7] text-[#1E1E1E] cursor-pointer"
+                      title="Restore window"
+                      aria-label="Restore"
+                    >
+                      <span className="w-2.5 h-[1px] bg-[#1E1E1E] block" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="minimized-maximize-btn"
+                      onClick={() => {
+                        setIsWindowMinimized(false);
+                      }}
+                      className="w-[34px] h-full flex items-center justify-center hover:bg-[#E5E5E5] text-[#1E1E1E] cursor-pointer"
+                      title="Maximize / Restore"
+                      aria-label="Maximize"
+                    >
+                      <span className="w-2.5 h-2.5 border border-[#1E1E1E] block" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="minimized-clear-btn"
+                      onClick={handleClearPage}
+                      className="w-[34px] h-full flex items-center justify-center hover:bg-[#E81123] hover:text-white text-[#1E1E1E] cursor-pointer text-[12px]"
+                      title="Clear page"
+                      aria-label="Clear page"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {/* Traditional Windows Taskbar */}
               <div
                 data-testid="windows-taskbar"
-                className="h-[40px] bg-[#1F242D] border-t border-[#343C4A] px-2 flex items-center justify-between text-[12px]"
+                className="h-[38px] bg-[#1F242D] border-t border-[#343C4A] px-2 flex items-center justify-between text-[12px]"
               >
                 <div className="flex items-center gap-1 h-full">
                   <div className="w-9 h-full flex items-center justify-center text-[#93C5FD]">
@@ -531,7 +736,7 @@ export default function App() {
                   </button>
                 </div>
                 <div className="text-[11px] text-[#CBD5E1] px-2">
-                  Click taskbar item to restore
+                  Minimized — click to restore
                 </div>
               </div>
             </div>
@@ -581,7 +786,8 @@ export default function App() {
               onSave={() => setIsSaveModalOpen(true)}
               onExportFormat={handleExportFormat}
               onPrint={() => window.print()}
-              onMinimizeWindow={() => setIsWindowMinimized(true)}
+              onMinimizeWindow={handleMinimizeWindow}
+              onClearPage={handleClearPage}
               onExitStudio={() => setCurrentView('welcome')}
             onCut={() => canvasStudioRef.current?.cutSelection()}
             onCopy={() => canvasStudioRef.current?.copySelection()}

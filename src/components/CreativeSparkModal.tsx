@@ -1,12 +1,20 @@
 import React, { useState } from 'react';
-import { X, RefreshCw, Lightbulb, Palette } from 'lucide-react';
+import { X, RefreshCw, Lightbulb, Palette, Keyboard } from 'lucide-react';
 import { getRandomSpark, COLOR_SUGGESTIONS } from '../data/creative';
+import { KEYBOARD_SHORTCUTS, ShortcutDescriptor } from '../utils/shortcuts';
 
 interface CreativeSparkModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectColor: (hex: string) => void;
 }
+
+const SHORTCUT_CATEGORIES: ShortcutDescriptor['category'][] = [
+  'Canvas & Image',
+  'Edit & Selection',
+  'Tools & Size',
+  'File & View',
+];
 
 export const CreativeSparkModal: React.FC<CreativeSparkModalProps> = ({
   isOpen,
@@ -31,14 +39,14 @@ export const CreativeSparkModal: React.FC<CreativeSparkModalProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md bg-white border-t sm:border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-slate-800 cursor-default"
+        className="w-full sm:max-w-2xl max-h-[88vh] bg-white border-t sm:border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-slate-800 cursor-default"
       >
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-white">
+        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
           <div className="flex items-center gap-2">
             <Lightbulb className="w-5 h-5 text-amber-500" />
             <h2 id="creative-spark-title" className="text-base font-bold text-slate-900">
-              Studio Tips & Harmonizers
+              Paint Help, Shortcuts &amp; Tips
             </h2>
           </div>
           <button
@@ -51,7 +59,46 @@ export const CreativeSparkModal: React.FC<CreativeSparkModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-5 flex flex-col gap-5 text-xs bg-slate-50/50">
+        <div className="p-5 flex flex-col gap-5 text-xs bg-slate-50/50 overflow-y-auto">
+          {/* Keyboard Shortcuts Reference */}
+          <div data-testid="keyboard-shortcuts-list">
+            <div className="flex items-center gap-1.5 text-slate-800 font-bold mb-1">
+              <Keyboard className="w-4 h-4 text-blue-600" />
+              <span>Keyboard Shortcuts</span>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-2.5">
+              Classic desktop Paint shortcuts for fast canvas edits, tools, and view controls:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {SHORTCUT_CATEGORIES.map((category) => {
+                const items = KEYBOARD_SHORTCUTS.filter((s) => s.category === category);
+                return (
+                  <div
+                    key={category}
+                    className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm"
+                  >
+                    <h3 className="text-[11px] font-bold text-slate-700 mb-2 border-b border-slate-100 pb-1">
+                      {category}
+                    </h3>
+                    <ul className="space-y-1.5">
+                      {items.map((item) => (
+                        <li
+                          key={`${category}-${item.keys}`}
+                          className="flex items-center justify-between gap-2 text-[11px]"
+                        >
+                          <span className="text-slate-600">{item.label}</span>
+                          <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px] font-mono text-slate-800 shrink-0">
+                            {item.keys}
+                          </kbd>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Inspiration Card */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/80 border border-blue-100 relative overflow-hidden shadow-sm">
             <div className="flex items-center gap-2 mb-2 text-blue-900 font-bold text-xs">
@@ -108,7 +155,7 @@ export const CreativeSparkModal: React.FC<CreativeSparkModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
+        <div className="p-4 border-t border-slate-100 bg-white flex justify-end shrink-0">
           <button
             onClick={onClose}
             className="px-5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold transition-colors cursor-pointer"

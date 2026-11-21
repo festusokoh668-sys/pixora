@@ -37,6 +37,7 @@ import {
   createStroke,
   createMirroredStrokes,
   toggleMirrorAxis,
+  clampSymmetryAxisRatio,
   stabilizePointerPoint,
   smoothStrokePoints,
   renderStrokeToContext,
@@ -65,6 +66,7 @@ export interface CanvasStudioHandle {
   rotateOrFlip: (action: 'cw90' | 'ccw90' | '180' | 'flipH' | 'flipV') => void;
   applyFilter: (filter: LayerFilterType) => void;
   exportRaster: (format: 'png' | 'jpg', quality?: number) => string | null;
+  clearCanvas: () => void;
   getCanPaste: () => boolean;
 }
 
@@ -222,6 +224,17 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
     const [internalSymmetryMode, setInternalSymmetryMode] = useState<MirrorMode>('none');
     const symmetryMode: MirrorMode = mirrorModeProp ?? internalSymmetryMode;
+    const [symmetryAxisRatio, setSymmetryAxisRatio] = useState<{ x: number; y: number }>({
+      x: 0.5,
+      y: 0.5,
+    });
+    const [draggingSymmetryAxis, setDraggingSymmetryAxis] = useState<
+      'vertical' | 'horizontal' | null
+    >(null);
+    const symmetryAxisCenter = {
+      x: Math.round(symmetryAxisRatio.x * canvasDimensions.width * 10) / 10,
+      y: Math.round(symmetryAxisRatio.y * canvasDimensions.height * 10) / 10,
+    };
 
     // Draggable Template HUD offset
     const [hudOffset, setHudOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -279,6 +292,48 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         updateSymmetryMode((prev) => toggleMirrorAxis(prev, axis));
       },
       [updateSymmetryMode]
+    );
+
+    const handleSymmetryGuidePointerDown = useCallback(
+      (axis: 'vertical' | 'horizontal', e: React.PointerEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
+        setDraggingSymmetryAxis(axis);
+      },
+      []
+    );
+
+    const handleSymmetryGuidePointerMove = useCallback(
+      (axis: 'vertical' | 'horizontal', e: React.PointerEvent<HTMLDivElement>) => {
+        if (draggingSymmetryAxis !== axis || !canvasRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = canvasRef.current.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        if (axis === 'vertical') {
+          const nextX = clampSymmetryAxisRatio((e.clientX - rect.left) / rect.width);
+          setSymmetryAxisRatio((prev) => ({ ...prev, x: nextX }));
+        } else {
+          const nextY = clampSymmetryAxisRatio((e.clientY - rect.top) / rect.height);
+          setSymmetryAxisRatio((prev) => ({ ...prev, y: nextY }));
+        }
+      },
+      [draggingSymmetryAxis]
+    );
+
+    const handleSymmetryGuidePointerUp = useCallback(
+      (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!draggingSymmetryAxis) return;
+        e.stopPropagation();
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {}
+        setDraggingSymmetryAxis(null);
+      },
+      [draggingSymmetryAxis]
     );
 
     // Sync selection flags to parent Ribbon
@@ -441,7 +496,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         strokesCanvas.width = canvas.width;
         strokesCanvas.height = canvas.height;
       }
-      const strokesCtx = strokesCanvas.getContext('2d');
+      const strokesCtx = strokesCanvas.getContext('2d', { willReadFrequently: true });
       if (!strokesCtx) return;
 
       // Ensure any raster patch images trigger a clean repaint once decoded
@@ -456,6 +511,9 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         }
       }
 
+      strokesCtx.setTransform(1, 0, 0, 1, 0, 0);
+      strokesCtx.globalAlpha = 1;
+      strokesCtx.globalCompositeOperation = 'source-over';
       strokesCtx.clearRect(0, 0, strokesCanvas.width, strokesCanvas.height);
       for (const stroke of strokes) {
         drawStroke(strokesCtx, stroke);
@@ -469,9 +527,12 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         baseCanvas.width = canvas.width;
         baseCanvas.height = canvas.height;
       }
-      const baseCtx = baseCanvas.getContext('2d');
+      const baseCtx = baseCanvas.getContext('2d', { willReadFrequently: true });
       if (!baseCtx) return;
 
+      baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+      baseCtx.globalAlpha = 1;
+      baseCtx.globalCompositeOperation = 'source-over';
       baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
       baseCtx.fillStyle = '#FFFFFF';
       baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
@@ -486,10 +547,12 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         baseCtx.restore();
       }
 
-      baseCtx.save();
-      baseCtx.globalCompositeOperation = 'source-over';
-      baseCtx.drawImage(strokesCanvas, 0, 0);
-      baseCtx.restore();
+      if (strokes.length > 0) {
+        baseCtx.save();
+        baseCtx.globalCompositeOperation = 'source-over';
+        baseCtx.drawImage(strokesCanvas, 0, 0);
+        baseCtx.restore();
+      }
 
       if (activeTemplate && showTemplateGuide && loadedTemplateImage) {
         const imgW = loadedTemplateImage.naturalWidth || loadedTemplateImage.width || baseCanvas.width;
@@ -502,10 +565,20 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         baseCtx.restore();
       }
 
-      const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(baseCanvas, 0, 0);
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        if (strokes.length === 0 && !(activeTemplate && showTemplateGuide && loadedTemplateImage)) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(baseCanvas, 0, 0);
+        }
+        ctx.restore();
       }
     }, [strokes, activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, canvasDimensions, drawStroke]);
 
@@ -517,7 +590,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
     const renderActiveStroke = useCallback(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return;
 
       const baseCanvas = baseCompositeCanvasRef.current;
@@ -569,7 +642,11 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         previewStroke,
         symmetryMode,
         canvas.width,
-        canvas.height
+        canvas.height,
+        {
+          x: Math.round(symmetryAxisRatio.x * canvas.width * 10) / 10,
+          y: Math.round(symmetryAxisRatio.y * canvas.height * 10) / 10,
+        }
       );
 
       if (previewStroke.tool === 'eraser') {
@@ -603,7 +680,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           drawStroke(ctx, strokeVariant);
         }
       }
-    }, [activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, symmetryMode, drawStroke]);
+    }, [activeTemplate, showTemplateGuide, loadedTemplateImage, templateOpacity, symmetryMode, symmetryAxisRatio, drawStroke]);
 
     // Capture a raster dataUrl of the user canvas + white paper for selection/crop/rotate ops
     const captureCompositeRegion = useCallback(
@@ -651,6 +728,61 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         },
         clearSelection: () => {
           setSelectionRect(null);
+        },
+        clearCanvas: () => {
+          if (activeRafIdRef.current) {
+            cancelAnimationFrame(activeRafIdRef.current);
+            activeRafIdRef.current = null;
+          }
+          isDrawingRef.current = false;
+          currentStrokeRef.current = null;
+          polygonDraftRef.current = null;
+          curveStageRef.current = null;
+          selectionDragStartRef.current = null;
+          isMovingSelectionRef.current = false;
+          floatingSelectionImgRef.current = null;
+          setSelectionRect(null);
+          setActiveTextBox(null);
+
+          const canvas = canvasRef.current;
+          const width = canvas?.width || canvasDimensions.width;
+          const height = canvas?.height || canvasDimensions.height;
+
+          if (strokesCanvasRef.current) {
+            const sctx = strokesCanvasRef.current.getContext('2d', { willReadFrequently: true });
+            if (sctx) {
+              sctx.save();
+              sctx.setTransform(1, 0, 0, 1, 0, 0);
+              sctx.globalAlpha = 1;
+              sctx.globalCompositeOperation = 'source-over';
+              sctx.clearRect(0, 0, strokesCanvasRef.current.width, strokesCanvasRef.current.height);
+              sctx.restore();
+            }
+          }
+          if (baseCompositeCanvasRef.current) {
+            const bctx = baseCompositeCanvasRef.current.getContext('2d', { willReadFrequently: true });
+            if (bctx) {
+              bctx.save();
+              bctx.setTransform(1, 0, 0, 1, 0, 0);
+              bctx.globalAlpha = 1;
+              bctx.globalCompositeOperation = 'source-over';
+              bctx.fillStyle = '#FFFFFF';
+              bctx.fillRect(0, 0, baseCompositeCanvasRef.current.width, baseCompositeCanvasRef.current.height);
+              bctx.restore();
+            }
+          }
+          if (canvas) {
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+              ctx.save();
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.globalAlpha = 1;
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, width, height);
+              ctx.restore();
+            }
+          }
         },
         deleteSelection: () => {
           if (!selectionRect) return;
@@ -988,7 +1120,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         const canvas = canvasRef.current;
         const base = baseCompositeCanvasRef.current;
         if (canvas && base) {
-          const ctx = canvas.getContext('2d', { desynchronized: true, willReadFrequently: true });
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
           if (ctx) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(base, 0, 0);
@@ -1307,7 +1439,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           fillStroke,
           symmetryMode,
           canvasDimensions.width,
-          canvasDimensions.height
+          canvasDimensions.height,
+          symmetryAxisCenter
         );
         onStrokesChange([...strokes, ...fillStrokes]);
         return;
@@ -1361,7 +1494,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 finalized,
                 symmetryMode,
                 canvasDimensions.width,
-                canvasDimensions.height
+                canvasDimensions.height,
+                symmetryAxisCenter
               );
               polygonDraftRef.current = null;
               currentStrokeRef.current = null;
@@ -1633,7 +1767,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         finalizedStroke,
         symmetryMode,
         canvasDimensions.width,
-        canvasDimensions.height
+        canvasDimensions.height,
+        symmetryAxisCenter
       );
 
       onStrokesChange([...strokes, ...strokesToCommit]);
@@ -1649,7 +1784,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           finalized,
           symmetryMode,
           canvasDimensions.width,
-          canvasDimensions.height
+          canvasDimensions.height,
+          symmetryAxisCenter
         );
         onStrokesChange([...strokes, ...commits]);
       }
@@ -2303,15 +2439,192 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 </div>
               )}
 
-              {/* Symmetry Center Guide Overlay */}
+              {/* Interactive Symmetry Axis Guide Overlay */}
               {symmetryMode !== 'none' && (
-                <div data-testid="mirror-guide-overlay" className="absolute inset-0 pointer-events-none z-20">
+                <div
+                  data-testid="mirror-guide-overlay"
+                  className="absolute inset-0 pointer-events-none z-20"
+                >
                   {(symmetryMode === 'horizontal' || symmetryMode === 'quad') && (
-                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0 border-l-2 border-dashed border-[#1979CA]/70" />
+                    <div
+                      data-testid="symmetry-vertical-axis"
+                      className="absolute inset-y-0 -translate-x-1/2 pointer-events-none"
+                      style={{ left: `${symmetryAxisRatio.x * 100}%` }}
+                    >
+                      <div
+                        className={`h-full w-0 border-l-2 border-dashed ${
+                          draggingSymmetryAxis === 'vertical'
+                            ? 'border-[#0B5CAD]'
+                            : 'border-[#1979CA]/75'
+                        }`}
+                      />
+                      <div
+                        role="slider"
+                        tabIndex={0}
+                        aria-label="Vertical symmetry axis position"
+                        aria-valuemin={5}
+                        aria-valuemax={95}
+                        aria-valuenow={Math.round(symmetryAxisRatio.x * 100)}
+                        data-testid="symmetry-vertical-handle"
+                        onPointerDown={(e) => handleSymmetryGuidePointerDown('vertical', e)}
+                        onPointerMove={(e) => handleSymmetryGuidePointerMove('vertical', e)}
+                        onPointerUp={handleSymmetryGuidePointerUp}
+                        onPointerCancel={handleSymmetryGuidePointerUp}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const delta = e.key === 'ArrowLeft' ? -0.02 : 0.02;
+                            setSymmetryAxisRatio((prev) => ({
+                              ...prev,
+                              x: clampSymmetryAxisRatio(prev.x + delta),
+                            }));
+                          }
+                        }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setSymmetryAxisRatio((prev) => ({ ...prev, x: 0.5 }));
+                          onNotify?.('Vertical symmetry axis centered');
+                        }}
+                        title="Drag left or right to move vertical symmetry axis · Double-click to center"
+                        className={`pointer-events-auto absolute top-2 left-1/2 -translate-x-1/2 px-1.5 py-0.5 flex items-center gap-1 text-[10px] font-medium border shadow-sm cursor-ew-resize select-none whitespace-nowrap ${
+                          draggingSymmetryAxis === 'vertical'
+                            ? 'bg-[#1979CA] text-white border-[#0F548F]'
+                            : 'bg-[#F5F6F7]/95 text-[#1E304B] border-[#7DA2CE] hover:bg-[#E5F1FB]'
+                        }`}
+                      >
+                        <span aria-hidden="true">↔</span>
+                        <span className="tabular-nums">
+                          X:{Math.round(symmetryAxisRatio.x * canvasDimensions.width)}
+                        </span>
+                      </div>
+                    </div>
                   )}
+
                   {(symmetryMode === 'vertical' || symmetryMode === 'quad') && (
-                    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0 border-t-2 border-dashed border-[#1979CA]/70" />
+                    <div
+                      data-testid="symmetry-horizontal-axis"
+                      className="absolute inset-x-0 -translate-y-1/2 pointer-events-none"
+                      style={{ top: `${symmetryAxisRatio.y * 100}%` }}
+                    >
+                      <div
+                        className={`w-full h-0 border-t-2 border-dashed ${
+                          draggingSymmetryAxis === 'horizontal'
+                            ? 'border-[#0B5CAD]'
+                            : 'border-[#1979CA]/75'
+                        }`}
+                      />
+                      <div
+                        role="slider"
+                        tabIndex={0}
+                        aria-label="Horizontal symmetry axis position"
+                        aria-valuemin={5}
+                        aria-valuemax={95}
+                        aria-valuenow={Math.round(symmetryAxisRatio.y * 100)}
+                        data-testid="symmetry-horizontal-handle"
+                        onPointerDown={(e) => handleSymmetryGuidePointerDown('horizontal', e)}
+                        onPointerMove={(e) => handleSymmetryGuidePointerMove('horizontal', e)}
+                        onPointerUp={handleSymmetryGuidePointerUp}
+                        onPointerCancel={handleSymmetryGuidePointerUp}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const delta = e.key === 'ArrowUp' ? -0.02 : 0.02;
+                            setSymmetryAxisRatio((prev) => ({
+                              ...prev,
+                              y: clampSymmetryAxisRatio(prev.y + delta),
+                            }));
+                          }
+                        }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setSymmetryAxisRatio((prev) => ({ ...prev, y: 0.5 }));
+                          onNotify?.('Horizontal symmetry axis centered');
+                        }}
+                        title="Drag up or down to move horizontal symmetry axis · Double-click to center"
+                        className={`pointer-events-auto absolute left-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 flex items-center gap-1 text-[10px] font-medium border shadow-sm cursor-ns-resize select-none whitespace-nowrap ${
+                          draggingSymmetryAxis === 'horizontal'
+                            ? 'bg-[#1979CA] text-white border-[#0F548F]'
+                            : 'bg-[#F5F6F7]/95 text-[#1E304B] border-[#7DA2CE] hover:bg-[#E5F1FB]'
+                        }`}
+                      >
+                        <span aria-hidden="true">↕</span>
+                        <span className="tabular-nums">
+                          Y:{Math.round(symmetryAxisRatio.y * canvasDimensions.height)}
+                        </span>
+                      </div>
+                    </div>
                   )}
+
+                  {/* Quick On-Canvas Axis Mode & Center Controls */}
+                  <div
+                    data-testid="symmetry-guide-toolbar"
+                    data-canvas-hud="true"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="pointer-events-auto absolute bottom-2 right-2 bg-[#F5F6F7]/95 border border-[#A0A0A0] shadow-sm px-1.5 py-1 flex items-center gap-1 text-[10.5px] text-[#1E1E1E] select-none"
+                  >
+                    <span className="font-semibold text-[#1979CA] px-1">Symmetry:</span>
+                    <button
+                      type="button"
+                      onClick={() => updateSymmetryMode('horizontal')}
+                      className={`px-1.5 py-0.5 border cursor-pointer ${
+                        symmetryMode === 'horizontal'
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                          : 'border-transparent hover:bg-[#E5F1FB]'
+                      }`}
+                      title="Vertical axis guide (mirror left & right)"
+                    >
+                      Vertical
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSymmetryMode('vertical')}
+                      className={`px-1.5 py-0.5 border cursor-pointer ${
+                        symmetryMode === 'vertical'
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                          : 'border-transparent hover:bg-[#E5F1FB]'
+                      }`}
+                      title="Horizontal axis guide (mirror top & bottom)"
+                    >
+                      Horizontal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSymmetryMode('quad')}
+                      className={`px-1.5 py-0.5 border cursor-pointer ${
+                        symmetryMode === 'quad'
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                          : 'border-transparent hover:bg-[#E5F1FB]'
+                      }`}
+                      title="4-Way Quad symmetry"
+                    >
+                      Quad
+                    </button>
+                    <span className="w-[1px] h-3 bg-[#DADBDC]" />
+                    <button
+                      type="button"
+                      data-testid="symmetry-center-btn"
+                      onClick={() => {
+                        setSymmetryAxisRatio({ x: 0.5, y: 0.5 });
+                        onNotify?.('Symmetry axis reset to canvas center');
+                      }}
+                      className="px-1.5 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
+                      title="Reset symmetry axis to exact canvas center"
+                    >
+                      Center
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="symmetry-close-btn"
+                      onClick={() => updateSymmetryMode('none')}
+                      className="px-1 py-0.5 border border-transparent hover:bg-[#FCE8E8] hover:border-[#E5A0A0] text-[#555] cursor-pointer"
+                      aria-label="Close Symmetry guide"
+                      title="Turn off Symmetry"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
               )}
 

@@ -360,24 +360,45 @@ export function toggleMirrorAxis(
 }
 
 /**
- * Generates reflected strokes across the canvas center lines based on active MirrorMode:
- * - 'horizontal': reflects points horizontally across x = canvasWidth / 2
- * - 'vertical': reflects points vertically across y = canvasHeight / 2
+ * Clamps normalized symmetry axis position (0..1) inside safe canvas margins.
+ */
+export function clampSymmetryAxisRatio(ratio: number, min = 0.05, max = 0.95): number {
+  if (!Number.isFinite(ratio)) return 0.5;
+  return Math.max(min, Math.min(max, Math.round(ratio * 1000) / 1000));
+}
+
+/**
+ * Toggles overall Symmetry mode on/off, remembering the last active axis
+ * (defaults to 'horizontal' mirror across the vertical centerline).
+ */
+export function resolveSymmetryToggle(
+  currentMode: MirrorMode,
+  lastActiveAxis: Exclude<MirrorMode, 'none'> = 'horizontal'
+): MirrorMode {
+  return currentMode === 'none' ? lastActiveAxis : 'none';
+}
+
+/**
+ * Generates reflected strokes across the active vertical/horizontal axis guides
+ * (defaulting to exact canvas center lines when axisCenter is omitted):
+ * - 'horizontal': reflects points horizontally across x = cx (vertical axis guide)
+ * - 'vertical': reflects points vertically across y = cy (horizontal axis guide)
  * - 'quad': reflects horizontally, vertically, and diagonally (4-way)
  */
 export function createMirroredStrokes(
   baseStroke: Stroke,
   mirrorMode: MirrorMode,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  axisCenter?: { x?: number; y?: number }
 ): Stroke[] {
   const result: Stroke[] = [baseStroke];
   if (mirrorMode === 'none' || baseStroke.points.length === 0) {
     return result;
   }
 
-  const cx = canvasWidth / 2;
-  const cy = canvasHeight / 2;
+  const cx = axisCenter?.x ?? canvasWidth / 2;
+  const cy = axisCenter?.y ?? canvasHeight / 2;
 
   if (mirrorMode === 'horizontal' || mirrorMode === 'quad') {
     result.push({

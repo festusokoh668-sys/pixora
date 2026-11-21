@@ -299,6 +299,29 @@ test('createMirroredStrokes reflects stroke points across canvas center for hori
   ]);
 });
 
+test('createMirroredStrokes supports custom interactive axis positions and Symmetry toggle helper', async () => {
+  const { createMirroredStrokes, clampSymmetryAxisRatio, resolveSymmetryToggle } = await import('./drawing');
+  const stroke = createStroke('brush', '#1979CA', 6, 1.0, { x: 150, y: 120, pressure: 0.5 });
+
+  // Custom vertical axis at x = 300 -> reflects x=150 to x=450
+  const customH = createMirroredStrokes(stroke, 'horizontal', 1000, 800, { x: 300, y: 400 });
+  assert.equal(customH[1].points[0].x, 450);
+  assert.equal(customH[1].points[0].y, 120);
+
+  // Custom horizontal axis at y = 200 -> reflects y=120 to y=280
+  const customV = createMirroredStrokes(stroke, 'vertical', 1000, 800, { x: 300, y: 200 });
+  assert.equal(customV[1].points[0].x, 150);
+  assert.equal(customV[1].points[0].y, 280);
+
+  assert.equal(clampSymmetryAxisRatio(-0.5), 0.05);
+  assert.equal(clampSymmetryAxisRatio(1.4), 0.95);
+  assert.equal(clampSymmetryAxisRatio(Number.NaN), 0.5);
+  assert.equal(clampSymmetryAxisRatio(0.325), 0.325);
+
+  assert.equal(resolveSymmetryToggle('none', 'vertical'), 'vertical');
+  assert.equal(resolveSymmetryToggle('horizontal', 'vertical'), 'none');
+});
+
 test('stabilizePointerPoint filters micro-jitter and applies adaptive EMA smoothing', async () => {
   const { stabilizePointerPoint } = await import('./drawing');
   const prev = { x: 100, y: 100, pressure: 0.5 };
