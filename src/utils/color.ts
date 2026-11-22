@@ -229,3 +229,131 @@ export function getSafeShareUrl(templateId?: string): string {
       : `${fallbackBase}?studio=1`;
   }
 }
+
+export const MAX_RECENT_COLORS = 10;
+
+export type ColorTarget = 'primary' | 'secondary';
+
+export interface ColorPreset {
+  name: string;
+  hex: string;
+}
+
+export const POPULAR_COLOR_PALETTE: ColorPreset[] = [
+  { name: 'Jet Black', hex: '#111827' },
+  { name: 'Pure White', hex: '#FFFFFF' },
+  { name: 'Slate Gray', hex: '#64748B' },
+  { name: 'Crimson Red', hex: '#EF4444' },
+  { name: 'Tangerine Orange', hex: '#F97316' },
+  { name: 'Marigold Yellow', hex: '#FACC15' },
+  { name: 'Emerald Green', hex: '#10B981' },
+  { name: 'Sky Cyan', hex: '#06B6D4' },
+  { name: 'Royal Blue', hex: '#2563EB' },
+  { name: 'Indigo Violet', hex: '#7C3AED' },
+  { name: 'Rose Pink', hex: '#EC4899' },
+  { name: 'Cocoa Brown', hex: '#92400E' },
+];
+
+/**
+ * Resolves the active hex color for the targeted color slot (primary or secondary).
+ */
+export function resolveTargetColor(
+  target: ColorTarget,
+  primaryColor: string,
+  secondaryColor?: string
+): string {
+  if (target === 'secondary' && secondaryColor) {
+    return secondaryColor;
+  }
+  return primaryColor;
+}
+
+/**
+ * Normalizes a CSS hex color (#RGB or #RRGGBB) to uppercase #RRGGBB, or returns null if invalid.
+ */
+export function normalizeHexColor(hex: string): string | null {
+  if (typeof hex !== 'string') return null;
+  const trimmed = hex.trim().toUpperCase();
+  const body = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
+
+  if (/^[0-9A-F]{3}$/.test(body)) {
+    return `#${body[0]}${body[0]}${body[1]}${body[1]}${body[2]}${body[2]}`;
+  }
+
+  if (/^[0-9A-F]{6}$/.test(body)) {
+    return `#${body}`;
+  }
+
+  return null;
+}
+
+/**
+ * Records a selected color into the most-recent-first unique color history,
+ * deduplicating case-insensitively and capping to `maxItems` (default 10).
+ */
+export function recordRecentColor(
+  history: string[],
+  hex: string,
+  maxItems: number = MAX_RECENT_COLORS
+): string[] {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized || maxItems <= 0) {
+    return history;
+  }
+
+  const deduped = history.filter((item) => normalizeHexColor(item) !== normalized);
+  return [normalized, ...deduped].slice(0, maxItems);
+}
+
+/**
+ * Interpolates smoothly between two hex colors for Gradient Brush strokes.
+ * Uses shortest-arc HSL interpolation when both colors are chromatic so midpoints
+ * pass through vivid multi-color hues (e.g. blue -> violet -> red), and falls back
+ * to clean RGB blending when either endpoint is grayscale/achromatic.
+ */
+export function interpolateHexColors(startHex: string, endHex: string, t: number): string {
+  const start = normalizeHexColor(startHex) ?? '#000000';
+  const end = normalizeHexColor(endHex) ?? '#FFFFFF';
+  const clampedT = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
+
+  if (clampedT <= 0) return start;
+  if (clampedT >= 1) return end;
+  if (start === end) return start;
+
+  const hsl1 = hexToHsl(start);
+  const hsl2 = hexToHsl(end);
+
+  if (hsl1.s > 12 && hsl2.s > 12) {
+    const deltaH = ((hsl2.h - hsl1.h + 540) % 360) - 180;
+    const h = (hsl1.h + deltaH * clampedT + 360) % 360;
+    const s = hsl1.s + (hsl2.s - hsl1.s) * clampedT;
+    const l = hsl1.l + (hsl2.l - hsl1.l) * clampedT;
+    return hslToHex(h, s, l);
+  }
+
+  const rgb1 = hexToRgb(start);
+  const rgb2 = hexToRgb(end);
+  return rgbToHex(
+    rgb1.r + (rgb2.r - rgb1.r) * clampedT,
+    rgb1.g + (rgb2.g - rgb1.g) * clampedT,
+    rgb1.b + (rgb2.b - rgb1.b) * clampedT
+  );
+}
+
+/**
+ * Builds an evenly spaced array of gradient color stops between primary and secondary colors.
+ */
+export function buildMultiStopGradientColors(
+  primaryHex: string,
+  secondaryHex: string,
+  stops: number = 5
+): string[] {
+  const count = Math.max(2, Math.round(stops));
+  const result: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = i / (count - 1);
+    result.push(interpolateHexColors(primaryHex, secondaryHex, t));
+  }
+  return result;
+}
+

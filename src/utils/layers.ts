@@ -263,3 +263,28 @@ export function getVisibleOrderedStrokes(
   }
   return result;
 }
+
+export const MOBILE_LAYERS_BREAKPOINT_PX = 768;
+
+/**
+ * Defaults the Layers panel to hidden on phone-sized viewports (< 768px)
+ * so the drawing canvas uses the full screen width until revealed.
+ */
+export function getDefaultLayersSidebarOpen(viewportWidth: number): boolean {
+  if (!Number.isFinite(viewportWidth)) return true;
+  return viewportWidth >= MOBILE_LAYERS_BREAKPOINT_PX;
+}
+
+/**
+ * Formats an unambiguous accessible label for hiding or revealing the Layers panel.
+ */
+export function getLayersToggleAccessibleLabel(
+  isOpen: boolean,
+  layerCount?: number
+): string {
+  if (isOpen) return 'Hide Layers panel';
+  if (typeof layerCount === 'number' && layerCount > 0) {
+    return `Reveal Layers panel (${layerCount})`;
+  }
+  return 'Reveal Layers panel';
+}

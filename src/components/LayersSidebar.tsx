@@ -5,9 +5,9 @@ import {
   Eye,
   EyeOff,
   Layers,
+  PanelRightClose,
   Plus,
   Trash2,
-  X,
 } from 'lucide-react';
 import { CanvasLayer, Stroke } from '../types';
 import {
@@ -134,10 +134,10 @@ export const LayersSidebar: React.FC<LayersSidebarProps> = ({
     <aside
       data-testid="layers-sidebar"
       aria-label="Layers panel"
-      className="w-[244px] shrink-0 h-full bg-[#F5F6F7] border-l border-[#C6C7C8] flex flex-col select-none text-[#1E1E1E] z-20"
+      className="absolute inset-y-0 right-0 z-40 w-[min(276px,82vw)] shadow-xl md:static md:z-20 md:w-[244px] md:shadow-none shrink-0 h-full bg-[#F5F6F7] border-l border-[#C6C7C8] flex flex-col select-none text-[#1E1E1E]"
     >
       {/* Sidebar Header */}
-      <div className="h-[34px] px-2.5 bg-[#ECEEF1] border-b border-[#DADBDC] flex items-center justify-between shrink-0">
+      <div className="h-[36px] md:h-[34px] px-2.5 bg-[#ECEEF1] border-b border-[#DADBDC] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <Layers className="w-4 h-4 text-[#1979CA] shrink-0" />
           <span className="text-[12px] font-semibold tracking-tight text-[#1E1E1E]">
@@ -156,7 +156,7 @@ export const LayersSidebar: React.FC<LayersSidebarProps> = ({
             type="button"
             data-testid="add-layer-btn"
             onClick={onAddLayer}
-            className="h-[24px] px-2 flex items-center gap-1 bg-white hover:bg-[#E5F1FB] border border-[#B8BDC4] hover:border-[#7DA2CE] text-[11px] font-medium text-[#1E1E1E] cursor-pointer"
+            className="h-[26px] md:h-[24px] px-2 flex items-center gap-1 bg-white hover:bg-[#E5F1FB] border border-[#B8BDC4] hover:border-[#7DA2CE] text-[11px] font-medium text-[#1E1E1E] cursor-pointer"
             title="Add new transparent layer above active layer"
             aria-label="Add new transparent layer"
           >
@@ -167,11 +167,12 @@ export const LayersSidebar: React.FC<LayersSidebarProps> = ({
             type="button"
             data-testid="close-layers-sidebar-btn"
             onClick={onCloseSidebar}
-            className="w-[24px] h-[24px] flex items-center justify-center hover:bg-[#E5E7EB] border border-transparent hover:border-[#C6C7C8] text-[#555555] cursor-pointer"
-            title="Hide Layers sidebar"
-            aria-label="Hide Layers sidebar"
+            className="h-[26px] md:h-[24px] px-1.5 flex items-center gap-1 bg-white/80 hover:bg-[#E5F1FB] border border-[#C6C7C8] hover:border-[#7DA2CE] text-[11px] font-medium text-[#333333] cursor-pointer"
+            title="Hide Layers panel"
+            aria-label="Hide Layers panel"
           >
-            <X className="w-3.5 h-3.5" />
+            <PanelRightClose className="w-3.5 h-3.5 text-[#555555]" />
+            <span>Hide</span>
           </button>
         </div>
       </div>
@@ -237,7 +238,7 @@ export const LayersSidebar: React.FC<LayersSidebarProps> = ({
                 aria-pressed={layer.visible}
                 aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
                 title={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
-                className={`w-[24px] h-[24px] shrink-0 flex items-center justify-center border cursor-pointer ${
+                className={`w-[28px] h-[28px] md:w-[24px] md:h-[24px] shrink-0 flex items-center justify-center border cursor-pointer ${
                   layer.visible
                     ? 'bg-white/80 border-[#C6C7C8] text-[#1979CA] hover:bg-white'
                     : 'bg-[#ECEEF1] border-[#DADBDC] text-[#8A929E] hover:text-[#333]'

@@ -167,3 +167,18 @@ test('getVisibleOrderedStrokes respects layer z-order, visibility, and legacy un
     ['s_legacy', 's_bottom']
   );
 });
+
+test('getDefaultLayersSidebarOpen hides panel on phones and reveals on desktop, with clear toggle labels', async () => {
+  const { getDefaultLayersSidebarOpen, getLayersToggleAccessibleLabel } = await import('./layers');
+
+  assert.equal(getDefaultLayersSidebarOpen(390), false);
+  assert.equal(getDefaultLayersSidebarOpen(640), false);
+  assert.equal(getDefaultLayersSidebarOpen(767), false);
+  assert.equal(getDefaultLayersSidebarOpen(768), true);
+  assert.equal(getDefaultLayersSidebarOpen(1440), true);
+  assert.equal(getDefaultLayersSidebarOpen(Number.NaN), true);
+
+  assert.equal(getLayersToggleAccessibleLabel(true, 3), 'Hide Layers panel');
+  assert.equal(getLayersToggleAccessibleLabel(false, 3), 'Reveal Layers panel (3)');
+  assert.equal(getLayersToggleAccessibleLabel(false), 'Reveal Layers panel');
+});

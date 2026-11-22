@@ -1,6 +1,12 @@
 import { Point, Stroke, ToolType, PaintFinish, MirrorMode } from '../types';
 import { floodFill } from './floodFill';
-import { hexToHsl, hslToHex } from './color';
+import {
+  buildMultiStopGradientColors,
+  hexToHsl,
+  hslToHex,
+  interpolateHexColors,
+  normalizeHexColor,
+} from './color';
 import { renderShapeToContext, shapeToSvgPathData } from './shapes';
 
 export interface PaintColorPalette {
@@ -116,6 +122,120 @@ export function stabilizePointerPoint(
     y: Math.round((previous.y + dy * alpha) * 10) / 10,
     pressure: Math.round((prevPressure + (rawPressure - prevPressure) * alpha) * 100) / 100,
   };
+}
+
+export interface StabilizerConfig {
+  intensity: number;
+  windowSize: number;
+  smoothingStrength: number;
+  minDistance: number;
+  previewPasses: number;
+  finalPasses: number;
+  subdivide: boolean;
+}
+
+/**
+ * Derives cursor-averaging window, EMA damping, and stroke refinement settings
+ * from a user-facing Stabilization intensity percentage (0 = raw/off, 100 = max smoothing).
+ */
+export function getStabilizerConfig(intensity: number): StabilizerConfig {
+  const clamped = Number.isFinite(intensity)
+    ? Math.max(0, Math.min(100, Math.round(intensity)))
+    : 45;
+
+  if (clamped <= 0) {
+    return {
+      intensity: 0,
+      windowSize: 1,
+      smoothingStrength: 0,
+      minDistance: 0.5,
+      previewPasses: 0,
+      finalPasses: 0,
+      subdivide: false,
+    };
+  }
+
+  const t = clamped / 100;
+  return {
+    intensity: clamped,
+    windowSize: 1 + Math.round(t * 10), // 2..11 cursor positions averaged
+    smoothingStrength: Math.round(t * 0.72 * 1000) / 1000,
+    minDistance: Math.round((0.5 + t * 1.4) * 100) / 100,
+    previewPasses: 1,
+    finalPasses: Math.max(1, Math.round(t * 4)),
+    subdivide: clamped >= 35,
+  };
+}
+
+/**
+ * Averages recent raw cursor positions using a recency-weighted sliding window
+ * sized by stabilization intensity so hand/mouse jitter cancels into smooth curves.
+ */
+export function averageCursorPositions(samples: Point[], intensity: number): Point {
+  if (samples.length === 0) {
+    return { x: 0, y: 0, pressure: 0.5 };
+  }
+
+  const latest = samples[samples.length - 1];
+  const { windowSize, intensity: clamped } = getStabilizerConfig(intensity);
+  if (clamped <= 0 || samples.length === 1 || windowSize <= 1) {
+    return {
+      x: Math.round(latest.x * 10) / 10,
+      y: Math.round(latest.y * 10) / 10,
+      pressure: typeof latest.pressure === 'number' ? latest.pressure : 0.5,
+    };
+  }
+
+  const windowSlice = samples.slice(-windowSize);
+  let sumX = 0;
+  let sumY = 0;
+  let sumPressure = 0;
+  let totalWeight = 0;
+
+  for (let i = 0; i < windowSlice.length; i++) {
+    const pt = windowSlice[i];
+    const weight = i + 1; // linear recency weighting across cursor window
+    sumX += pt.x * weight;
+    sumY += pt.y * weight;
+    sumPressure += (typeof pt.pressure === 'number' ? pt.pressure : 0.5) * weight;
+    totalWeight += weight;
+  }
+
+  return {
+    x: Math.round((sumX / totalWeight) * 10) / 10,
+    y: Math.round((sumY / totalWeight) * 10) / 10,
+    pressure: Math.round((sumPressure / totalWeight) * 100) / 100,
+  };
+}
+
+/**
+ * Stabilizes an incoming cursor stream by averaging recent cursor positions
+ * and blending smoothly with the previous committed point according to intensity (0..100).
+ */
+export function stabilizeCursorStream(
+  rawBuffer: Point[],
+  previousOutput: Point | null,
+  intensity: number
+): Point | null {
+  if (rawBuffer.length === 0) return null;
+
+  const averaged = averageCursorPositions(rawBuffer, intensity);
+  if (!previousOutput) {
+    return averaged;
+  }
+
+  const config = getStabilizerConfig(intensity);
+  if (config.intensity <= 0) {
+    const dist = Math.hypot(averaged.x - previousOutput.x, averaged.y - previousOutput.y);
+    return dist < config.minDistance ? null : averaged;
+  }
+
+  return stabilizePointerPoint(
+    previousOutput,
+    averaged,
+    config.smoothingStrength,
+    config.minDistance
+  );
 }
 
 /**
@@ -249,70 +369,532 @@ export function smoothStrokePoints(
   return current;
 }
 
+const MIN_STYLUS_PRESSURE = 0.05;
+
+/**
+ * Normalizes PointerEvent pressure across stylus/pen, touch, Force Touch trackpads,
+ * and standard mouse devices:
+ * - Pen/touch with 0 contact pressure maps to a fine hairline taper floor (0.05).
+ * - Standard mouse defaults (0 / undefined) map to neutral 0.5 (1.0x brush width),
+ *   while preserving non-zero custom pressure values when supplied by hardware or tests.
+ */
+export function resolvePointerEventPressure(
+  ev: {
+    pressure?: number;
+    pointerType?: string;
+    buttons?: number;
+  },
+  options?: { enabled?: boolean }
+): number {
+  if (options?.enabled === false) {
+    return 0.5;
+  }
+
+  const raw = ev.pressure;
+  const pointerType = ev.pointerType || 'mouse';
+
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return 0.5;
+  }
+
+  if (pointerType === 'pen') {
+    if (raw <= 0) return MIN_STYLUS_PRESSURE;
+    return Math.max(MIN_STYLUS_PRESSURE, Math.min(1, Math.round(raw * 1000) / 1000));
+  }
+
+  // Touch devices without force-touch sensors report pressure === 0; treat as neutral 0.5
+  if (raw <= 0) return 0.5;
+  return Math.max(MIN_STYLUS_PRESSURE, Math.min(1, Math.round(raw * 1000) / 1000));
+}
+
+/**
+ * Returns true if the PointerEvent device/sample supplies active pressure input
+ * (e.g., stylus/pen or hardware force-touch/mouse reporting custom pressure).
+ */
+export function doesPointerEventProvidePressure(ev: {
+  pressure?: number;
+  pointerType?: string;
+}): boolean {
+  if (ev.pointerType === 'pen') return true;
+  return (
+    typeof ev.pressure === 'number' &&
+    Number.isFinite(ev.pressure) &&
+    ev.pressure > 0 &&
+    Math.abs(ev.pressure - 0.5) > 0.001
+  );
+}
+
+/**
+ * Maps normalized pointer pressure (0..1) dynamically onto brush width:
+ * - p = 0.05 (light taper) -> ~0.28x base width
+ * - p = 0.50 (neutral mouse) -> 1.00x base width
+ * - p = 1.00 (heavy press) -> 1.80x base width
+ */
+export function calculatePressureWidth(baseLineWidth: number, pressure?: number): number {
+  const p =
+    typeof pressure === 'number' && Number.isFinite(pressure)
+      ? Math.max(0, Math.min(1, pressure))
+      : 0.5;
+  const scale = 0.2 + p * 1.6;
+  return Math.max(0.6, baseLineWidth * scale);
+}
+
+/**
+ * Maps normalized pointer pressure (0..1) onto stroke opacity when enabled.
+ * Neutral p = 0.50 evaluates to exact 1.00x baseAlpha.
+ */
+export function calculatePressureOpacity(
+  baseAlpha: number,
+  pressure?: number,
+  scaleAlpha: boolean = true
+): number {
+  if (!scaleAlpha) return baseAlpha;
+  const p =
+    typeof pressure === 'number' && Number.isFinite(pressure)
+      ? Math.max(0, Math.min(1, pressure))
+      : 0.5;
+  return Math.min(1.0, Math.max(0.05, baseAlpha * (0.55 + p * 0.9)));
+}
+
+function getPointPressure(p: Point): number {
+  return typeof p.pressure === 'number' && Number.isFinite(p.pressure) ? p.pressure : 0.5;
+}
+
+export interface PressureSpineSample {
+  x: number;
+  y: number;
+  pressure: number;
+  radius: number;
+}
+
+/**
+ * Samples points and interpolated pressure radii along a smoothed quadratic spline
+ * for rendering knot-free variable-width brush contours.
+ */
+export function samplePressureSpline(
+  points: Point[],
+  baseLineWidth: number
+): PressureSpineSample[] {
+  if (points.length === 0) return [];
+
+  // Deduplicate near-coincident points so tangent normals stay well-defined
+  const clean: Array<{ x: number; y: number; pressure: number }> = [
+    { x: points[0].x, y: points[0].y, pressure: getPointPressure(points[0]) },
+  ];
+  for (let i = 1; i < points.length; i++) {
+    const prev = clean[clean.length - 1];
+    const p = points[i];
+    const pr = getPointPressure(p);
+    if (Math.hypot(p.x - prev.x, p.y - prev.y) >= 0.6) {
+      clean.push({ x: p.x, y: p.y, pressure: pr });
+    } else {
+      prev.pressure = pr;
+    }
+  }
+
+  if (clean.length === 1) {
+    const p = clean[0];
+    return [
+      {
+        x: p.x,
+        y: p.y,
+        pressure: p.pressure,
+        radius: calculatePressureWidth(baseLineWidth, p.pressure) / 2,
+      },
+    ];
+  }
+
+  const samples: PressureSpineSample[] = [];
+  const pushSample = (x: number, y: number, pressure: number) => {
+    const last = samples[samples.length - 1];
+    if (!last || Math.hypot(x - last.x, y - last.y) >= 1.2) {
+      samples.push({
+        x,
+        y,
+        pressure,
+        radius: calculatePressureWidth(baseLineWidth, pressure) / 2,
+      });
+    }
+  };
+
+  if (clean.length === 2) {
+    const [a, b] = clean;
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const steps = Math.min(48, Math.max(2, Math.ceil(dist / 3)));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      pushSample(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.pressure + (b.pressure - a.pressure) * t
+      );
+    }
+    return samples;
+  }
+
+  let prevMid = clean[0];
+  pushSample(prevMid.x, prevMid.y, prevMid.pressure);
+
+  for (let i = 0; i < clean.length - 1; i++) {
+    const pCurr = clean[i];
+    const pNext = clean[i + 1];
+    const isLast = i === clean.length - 2;
+    const nextMid = isLast
+      ? pNext
+      : {
+          x: (pCurr.x + pNext.x) / 2,
+          y: (pCurr.y + pNext.y) / 2,
+          pressure: (pCurr.pressure + pNext.pressure) / 2,
+        };
+    const pStart = i === 0 ? clean[0].pressure : (clean[i - 1].pressure + pCurr.pressure) / 2;
+    const pEnd = nextMid.pressure;
+
+    const segDist = Math.hypot(nextMid.x - prevMid.x, nextMid.y - prevMid.y);
+    const steps = Math.min(32, Math.max(2, Math.ceil(segDist / 3)));
+
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      if (i === 0 || isLast) {
+        pushSample(
+          prevMid.x + (nextMid.x - prevMid.x) * t,
+          prevMid.y + (nextMid.y - prevMid.y) * t,
+          pStart + (pEnd - pStart) * t
+        );
+      } else {
+        const omt = 1 - t;
+        pushSample(
+          omt * omt * prevMid.x + 2 * omt * t * pCurr.x + t * t * nextMid.x,
+          omt * omt * prevMid.y + 2 * omt * t * pCurr.y + t * t * nextMid.y,
+          pStart + (pEnd - pStart) * t
+        );
+      }
+    }
+
+    prevMid = nextMid;
+  }
+
+  return samples;
+}
+
 /**
  * Draws a smooth stroke path using quadratic curve approximation between consecutive midpoints,
- * dynamically scaling stroke width and opacity based on PointerEvent pressure.
+ * dynamically scaling brush width and opacity from PointerEvent pressure without joint artifacts.
  */
-export function drawQuadraticPath(ctx: CanvasRenderingContext2D, points: Point[]): void {
+export function drawQuadraticPath(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  options?: { scaleAlpha?: boolean }
+): void {
   if (points.length === 0) return;
 
   const baseLineWidth = ctx.lineWidth;
   const baseAlpha = ctx.globalAlpha;
+  const scaleAlpha = options?.scaleAlpha ?? true;
 
   if (points.length === 1) {
     const p = points[0];
-    const pressure = typeof p.pressure === 'number' ? p.pressure : 0.5;
-    const dynamicWidth = baseLineWidth * (0.4 + pressure * 1.2);
+    const pressure = getPointPressure(p);
+    const dynamicWidth = calculatePressureWidth(baseLineWidth, pressure);
     ctx.save();
     ctx.lineWidth = dynamicWidth;
-    ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.5 + pressure * 0.8));
+    ctx.globalAlpha = calculatePressureOpacity(baseAlpha, pressure, scaleAlpha);
     ctx.beginPath();
-    ctx.arc(p.x, p.y, ctx.lineWidth / 2, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, dynamicWidth / 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     return;
   }
 
-  if (points.length === 2) {
-    const p0 = points[0];
-    const p1 = points[1];
-    const pAvg = { pressure: ((p0.pressure || 0.5) + (p1.pressure || 0.5)) / 2 };
-    const pressure = pAvg.pressure;
+  // Check if stroke uses dashed grain (crayon / pencil texture pass) or has uniform pressure
+  const isDashedPass = typeof ctx.getLineDash === 'function' && ctx.getLineDash().length > 0;
+  let minP = Infinity;
+  let maxP = -Infinity;
+  let sumP = 0;
+  for (let i = 0; i < points.length; i++) {
+    const pr = getPointPressure(points[i]);
+    if (pr < minP) minP = pr;
+    if (pr > maxP) maxP = pr;
+    sumP += pr;
+  }
+  const avgP = sumP / points.length;
+  const hasVariablePressure = maxP - minP >= 0.025;
+
+  // Uniform pressure OR dashed grain pass: stroke ONE continuous quadratic path (zero joints)
+  if (!hasVariablePressure || isDashedPass) {
     ctx.save();
-    ctx.lineWidth = baseLineWidth * (0.4 + pressure * 1.2);
-    ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.5 + pressure * 0.8));
+    ctx.lineWidth = calculatePressureWidth(baseLineWidth, avgP);
+    ctx.globalAlpha = calculatePressureOpacity(baseAlpha, avgP, scaleAlpha);
     ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
+    ctx.moveTo(points[0].x, points[0].y);
+    if (points.length === 2) {
+      ctx.lineTo(points[1].x, points[1].y);
+    } else {
+      for (let i = 1; i < points.length - 1; i++) {
+        const mid = getMidPoint(points[i], points[i + 1]);
+        ctx.quadraticCurveTo(points[i].x, points[i].y, mid.x, mid.y);
+      }
+      const last = points[points.length - 1];
+      ctx.lineTo(last.x, last.y);
+    }
     ctx.stroke();
     ctx.restore();
     return;
   }
 
-  // Continuous segment-by-segment quadratic curves with per-segment pressure profiling
-  let prevMid: Point = points[0];
-  for (let i = 0; i < points.length - 1; i++) {
-    const pCurr = points[i];
-    const pNext = points[i + 1];
-    const nextMid = i === points.length - 2 ? pNext : getMidPoint(pCurr, pNext);
-    const pressure = ((pCurr.pressure || 0.5) + (pNext.pressure || 0.5)) / 2;
-
+  // Variable-pressure solid stroke: build ONE closed tapered ribbon contour and fill once
+  const spine = samplePressureSpline(points, baseLineWidth);
+  if (spine.length === 0) return;
+  if (spine.length === 1) {
+    const s = spine[0];
     ctx.save();
-    ctx.lineWidth = baseLineWidth * (0.4 + pressure * 1.2);
-    ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.5 + pressure * 0.8));
-
+    ctx.globalAlpha = calculatePressureOpacity(baseAlpha, s.pressure, scaleAlpha);
     ctx.beginPath();
-    ctx.moveTo(prevMid.x, prevMid.y);
-    if (i === 0 || i === points.length - 2) {
-      ctx.lineTo(nextMid.x, nextMid.y);
-    } else {
-      ctx.quadraticCurveTo(pCurr.x, pCurr.y, nextMid.x, nextMid.y);
-    }
-    ctx.stroke();
+    ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
-
-    prevMid = nextMid;
+    return;
   }
+
+  const leftEdge: Array<{ x: number; y: number }> = [];
+  const rightEdge: Array<{ x: number; y: number }> = [];
+  let startAngle = 0;
+  let endAngle = 0;
+
+  for (let i = 0; i < spine.length; i++) {
+    const curr = spine[i];
+    const prev = spine[Math.max(0, i - 1)];
+    const next = spine[Math.min(spine.length - 1, i + 1)];
+    let tx = next.x - prev.x;
+    let ty = next.y - prev.y;
+    const len = Math.hypot(tx, ty) || 1;
+    tx /= len;
+    ty /= len;
+
+    const nx = -ty;
+    const ny = tx;
+    const angle = Math.atan2(ny, nx);
+    if (i === 0) startAngle = angle;
+    if (i === spine.length - 1) endAngle = angle;
+
+    leftEdge.push({ x: curr.x + nx * curr.radius, y: curr.y + ny * curr.radius });
+    rightEdge.push({ x: curr.x - nx * curr.radius, y: curr.y - ny * curr.radius });
+  }
+
+  ctx.save();
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.globalAlpha = calculatePressureOpacity(baseAlpha, avgP, scaleAlpha);
+  ctx.beginPath();
+  ctx.arc(
+    spine[0].x,
+    spine[0].y,
+    spine[0].radius,
+    startAngle + Math.PI,
+    startAngle,
+    true
+  );
+  for (let i = 1; i < leftEdge.length; i++) {
+    ctx.lineTo(leftEdge[i].x, leftEdge[i].y);
+  }
+  const lastSpine = spine[spine.length - 1];
+  ctx.arc(
+    lastSpine.x,
+    lastSpine.y,
+    lastSpine.radius,
+    endAngle,
+    endAngle - Math.PI,
+    true
+  );
+  for (let i = rightEdge.length - 2; i >= 0; i--) {
+    ctx.lineTo(rightEdge[i].x, rightEdge[i].y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+export interface GradientSpineSample extends PressureSpineSample {
+  t: number;
+  color: string;
+}
+
+/**
+ * Resolves the optional gradient end color for a stroke based on Gradient Brush mode
+ * or explicit gradient preset end color.
+ */
+export function resolveStrokeGradientEnd(
+  strokeColor: string,
+  secondaryColor: string,
+  options?: { isGradientBrush?: boolean; explicitColorEnd?: string | null }
+): string | undefined {
+  if (options?.isGradientBrush) {
+    return normalizeHexColor(secondaryColor) ?? secondaryColor;
+  }
+  if (options?.explicitColorEnd) {
+    return normalizeHexColor(options.explicitColorEnd) ?? options.explicitColorEnd;
+  }
+  void strokeColor;
+  return undefined;
+}
+
+/**
+ * Samples a pressure-aware spline along the stroke and assigns cumulative arc-length progress `t`
+ * plus the smoothly interpolated hex color between `startColor` and `endColor`.
+ */
+export function sampleGradientSpine(
+  points: Point[],
+  baseLineWidth: number,
+  startColor: string,
+  endColor: string
+): GradientSpineSample[] {
+  const spine = samplePressureSpline(points, baseLineWidth);
+  if (spine.length === 0) return [];
+  if (spine.length === 1) {
+    return [
+      {
+        ...spine[0],
+        t: 0,
+        color: normalizeHexColor(startColor) ?? startColor,
+      },
+    ];
+  }
+
+  const cumulativeDist: number[] = [0];
+  let totalDist = 0;
+  for (let i = 1; i < spine.length; i++) {
+    totalDist += Math.hypot(spine[i].x - spine[i - 1].x, spine[i].y - spine[i - 1].y);
+    cumulativeDist.push(totalDist);
+  }
+
+  return spine.map((s, idx) => {
+    const t = totalDist > 0 ? cumulativeDist[idx] / totalDist : idx / (spine.length - 1);
+    return {
+      ...s,
+      t,
+      color: interpolateHexColors(startColor, endColor, t),
+    };
+  });
+}
+
+let gradientScratchCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * Draws a pressure-aware smooth stroke with continuous multi-color gradient transition
+ * along the drawn path from `startColor` (primary) to `endColor` (secondary).
+ */
+export function drawGradientQuadraticPath(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  startColor: string,
+  endColor: string,
+  options?: { scaleAlpha?: boolean; dashEvery?: number }
+): void {
+  if (points.length === 0) return;
+
+  const baseLineWidth = ctx.lineWidth;
+  const baseAlpha = ctx.globalAlpha;
+  const scaleAlpha = options?.scaleAlpha ?? true;
+
+  if (points.length === 1) {
+    const p = points[0];
+    const pressure = getPointPressure(p);
+    const radius = calculatePressureWidth(baseLineWidth, pressure) / 2;
+    ctx.save();
+    ctx.globalAlpha = calculatePressureOpacity(baseAlpha, pressure, scaleAlpha);
+    if (typeof ctx.createRadialGradient === 'function') {
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(1, radius));
+      grad.addColorStop(0, startColor);
+      grad.addColorStop(1, endColor);
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = startColor;
+    }
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  const gradientSpine = sampleGradientSpine(points, baseLineWidth, startColor, endColor);
+  if (gradientSpine.length === 0) return;
+
+  let avgPressure = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of gradientSpine) {
+    avgPressure += s.pressure;
+    if (s.x - s.radius < minX) minX = s.x - s.radius;
+    if (s.y - s.radius < minY) minY = s.y - s.radius;
+    if (s.x + s.radius > maxX) maxX = s.x + s.radius;
+    if (s.y + s.radius > maxY) maxY = s.y + s.radius;
+  }
+  avgPressure /= gradientSpine.length;
+  const effectiveAlpha = calculatePressureOpacity(baseAlpha, avgPressure, scaleAlpha);
+
+  const stampSequence = (targetCtx: CanvasRenderingContext2D, offsetX: number, offsetY: number) => {
+    const dashEvery = options?.dashEvery ?? 0;
+    let stampIndex = 0;
+
+    for (let i = 0; i < gradientSpine.length - 1; i++) {
+      const a = gradientSpine[i];
+      const b = gradientSpine[i + 1];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      const minR = Math.max(0.8, Math.min(a.radius, b.radius));
+      const stepSize = dashEvery > 0 ? Math.max(2, minR * 1.1) : Math.max(0.75, minR * 0.4);
+      const subSteps = Math.max(1, Math.ceil(dist / stepSize));
+
+      for (let step = 0; step <= subSteps; step++) {
+        if (step === 0 && i > 0) continue;
+        if (dashEvery > 0 && stampIndex % dashEvery === dashEvery - 1) {
+          stampIndex++;
+          continue;
+        }
+        const f = step / subSteps;
+        const x = a.x + (b.x - a.x) * f - offsetX;
+        const y = a.y + (b.y - a.y) * f - offsetY;
+        const r = a.radius + (b.radius - a.radius) * f;
+        const t = a.t + (b.t - a.t) * f;
+        targetCtx.fillStyle = interpolateHexColors(startColor, endColor, t);
+        targetCtx.beginPath();
+        targetCtx.arc(x, y, r, 0, Math.PI * 2);
+        targetCtx.fill();
+        stampIndex++;
+      }
+    }
+  };
+
+  // For translucent strokes, composite opaque gradient stamps into an isolated scratch buffer
+  // so overlapping stamps along the curve never create dark alpha seams.
+  if (effectiveAlpha < 0.985 && typeof document !== 'undefined') {
+    const pad = 4;
+    const bx = Math.floor(minX) - pad;
+    const by = Math.floor(minY) - pad;
+    const bw = Math.max(2, Math.ceil(maxX - bx) + pad);
+    const bh = Math.max(2, Math.ceil(maxY - by) + pad);
+
+    if (!gradientScratchCanvas) {
+      gradientScratchCanvas = document.createElement('canvas');
+    }
+    gradientScratchCanvas.width = bw;
+    gradientScratchCanvas.height = bh;
+    const sctx = gradientScratchCanvas.getContext('2d');
+    if (sctx) {
+      sctx.clearRect(0, 0, bw, bh);
+      stampSequence(sctx, bx, by);
+      ctx.save();
+      ctx.globalAlpha = effectiveAlpha;
+      ctx.drawImage(gradientScratchCanvas, bx, by);
+      ctx.restore();
+      return;
+    }
+  }
+
+  ctx.save();
+  ctx.globalAlpha = effectiveAlpha;
+  stampSequence(ctx, 0, 0);
+  ctx.restore();
 }
 
 /**
@@ -379,6 +961,22 @@ export function resolveSymmetryToggle(
 }
 
 /**
+ * Returns a concise status message describing the active mirror symmetry mode.
+ */
+export function getMirrorModeStatusMessage(mode: MirrorMode): string {
+  switch (mode) {
+    case 'horizontal':
+      return 'Mirror Horizontal active (left & right)';
+    case 'vertical':
+      return 'Mirror Vertical active (top & bottom)';
+    case 'quad':
+      return 'Quad Mirror active (Horizontal + Vertical)';
+    default:
+      return 'Mirror symmetry turned off';
+  }
+}
+
+/**
  * Generates reflected strokes across the active vertical/horizontal axis guides
  * (defaulting to exact canvas center lines when axisCenter is omitted):
  * - 'horizontal': reflects points horizontally across x = cx (vertical axis guide)
@@ -400,11 +998,17 @@ export function createMirroredStrokes(
   const cx = axisCenter?.x ?? canvasWidth / 2;
   const cy = axisCenter?.y ?? canvasHeight / 2;
 
+  const needsShapeFlipFlag =
+    baseStroke.tool === 'shape' &&
+    baseStroke.shapeType !== 'line' &&
+    baseStroke.shapeType !== 'curve' &&
+    baseStroke.shapeType !== 'polygon';
+
   if (mirrorMode === 'horizontal' || mirrorMode === 'quad') {
     result.push({
       ...baseStroke,
       id: `${baseStroke.id}_symH`,
-      ...(baseStroke.tool === 'shape' ? { flipH: !baseStroke.flipH } : {}),
+      ...(needsShapeFlipFlag ? { flipH: !baseStroke.flipH } : {}),
       points: baseStroke.points.map((p) => ({
         ...p,
         x: Math.round((cx + (cx - p.x)) * 10) / 10,
@@ -416,7 +1020,7 @@ export function createMirroredStrokes(
     result.push({
       ...baseStroke,
       id: `${baseStroke.id}_symV`,
-      ...(baseStroke.tool === 'shape' ? { flipV: !baseStroke.flipV } : {}),
+      ...(needsShapeFlipFlag ? { flipV: !baseStroke.flipV } : {}),
       points: baseStroke.points.map((p) => ({
         ...p,
         y: Math.round((cy + (cy - p.y)) * 10) / 10,
@@ -428,7 +1032,7 @@ export function createMirroredStrokes(
     result.push({
       ...baseStroke,
       id: `${baseStroke.id}_symQ`,
-      ...(baseStroke.tool === 'shape'
+      ...(needsShapeFlipFlag
         ? { flipH: !baseStroke.flipH, flipV: !baseStroke.flipV }
         : {}),
       points: baseStroke.points.map((p) => ({
@@ -669,24 +1273,23 @@ export function renderStrokeToContext(
   if (stroke.tool === 'eraser') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    drawQuadraticPath(ctx, stroke.points);
+    drawQuadraticPath(ctx, stroke.points, { scaleAlpha: false });
     ctx.restore();
     return;
   }
 
   const palette = getPaintColorPalette(stroke.color);
+  const gradientEnd = stroke.colorEnd;
 
-  // Resolves linear gradient between start and end point if colorEnd is present
-  const getGradientOrColor = (fallback: string) => {
-    if (stroke.colorEnd && stroke.colorEnd !== stroke.color && stroke.points.length > 1) {
-      const p1 = stroke.points[0];
-      const p2 = stroke.points[stroke.points.length - 1];
-      const grad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
-      grad.addColorStop(0, stroke.color);
-      grad.addColorStop(1, stroke.colorEnd);
-      return grad;
+  const renderPathWithOptionalGradient = (
+    pathCtx: CanvasRenderingContext2D,
+    options?: { scaleAlpha?: boolean; dashEvery?: number }
+  ) => {
+    if (gradientEnd) {
+      drawGradientQuadraticPath(pathCtx, stroke.points, stroke.color, gradientEnd, options);
+    } else {
+      drawQuadraticPath(pathCtx, stroke.points, options);
     }
-    return fallback;
   };
 
   if (stroke.tool === 'brush' || stroke.tool === 'oil') {
@@ -703,12 +1306,13 @@ export function renderStrokeToContext(
     drawQuadraticPath(ctx, stroke.points);
     ctx.restore();
 
-    // 2. Viscous Base Paint Body
+    // 2. Viscous Base Paint Body (solid or arc-length multi-color gradient)
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    ctx.strokeStyle = getGradientOrColor(stroke.color);
-    ctx.fillStyle = stroke.color;
-    drawQuadraticPath(ctx, stroke.points);
+    if (gradientEnd) {
+      ctx.shadowBlur = 0;
+    }
+    renderPathWithOptionalGradient(ctx);
     ctx.restore();
 
     // 3. Longitudinal Bristle Texture & Grooves
@@ -718,7 +1322,7 @@ export function renderStrokeToContext(
       ctx.lineJoin = 'round';
       ctx.translate(stroke.size * 0.08, stroke.size * 0.08);
       ctx.lineWidth = Math.max(1, stroke.size * 0.35 * sizeScale);
-      ctx.strokeStyle = palette.bristleDark;
+      ctx.strokeStyle = gradientEnd ? 'rgba(15, 23, 42, 0.22)' : palette.bristleDark;
       ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.32);
       drawQuadraticPath(ctx, stroke.points);
       ctx.restore();
@@ -728,7 +1332,7 @@ export function renderStrokeToContext(
       ctx.lineJoin = 'round';
       ctx.translate(-stroke.size * 0.1, -stroke.size * 0.1);
       ctx.lineWidth = Math.max(1, stroke.size * 0.38 * sizeScale);
-      ctx.strokeStyle = palette.bristleLight;
+      ctx.strokeStyle = gradientEnd ? 'rgba(255, 255, 255, 0.35)' : palette.bristleLight;
       ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.36);
       drawQuadraticPath(ctx, stroke.points);
       ctx.restore();
@@ -741,13 +1345,13 @@ export function renderStrokeToContext(
       ctx.lineJoin = 'round';
       ctx.translate(-Math.max(0.4, stroke.size * 0.08), -Math.max(0.5, stroke.size * 0.1));
       ctx.lineWidth = Math.max(0.8, stroke.size * 0.28);
-      ctx.strokeStyle = palette.glossCrest;
+      ctx.strokeStyle = gradientEnd ? 'rgba(255, 255, 255, 0.42)' : palette.glossCrest;
       ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.45);
       drawQuadraticPath(ctx, stroke.points);
 
       if (stroke.size >= 6) {
         ctx.lineWidth = Math.max(0.5, stroke.size * 0.12);
-        ctx.strokeStyle = palette.specularHighlight;
+        ctx.strokeStyle = gradientEnd ? 'rgba(255, 255, 255, 0.6)' : palette.specularHighlight;
         ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.55);
         drawQuadraticPath(ctx, stroke.points);
       }
@@ -759,16 +1363,21 @@ export function renderStrokeToContext(
   if (stroke.tool === 'airbrush') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    drawQuadraticPath(ctx, stroke.points);
-    // Deterministic fine spray speckle dots along stroke
-    const radius = stroke.size * 1.4;
-    ctx.fillStyle = stroke.color;
+    if (gradientEnd) ctx.shadowBlur = 0;
+    renderPathWithOptionalGradient(ctx);
+    // Deterministic fine spray speckle dots scaled dynamically by point pressure & gradient progress
+    const totalPts = Math.max(1, stroke.points.length - 1);
     for (let i = 0; i < stroke.points.length; i++) {
       const p = stroke.points[i];
+      const pressure = getPointPressure(p);
+      const radius = calculatePressureWidth(stroke.size * 1.4, pressure);
+      ctx.fillStyle = gradientEnd
+        ? interpolateHexColors(stroke.color, gradientEnd, i / totalPts)
+        : stroke.color;
       for (let d = 0; d < 6; d++) {
         const angle = ((i * 7 + d * 13) % 360) * (Math.PI / 180);
         const r = (((i * 19 + d * 31) % 100) / 100) * radius;
-        ctx.globalAlpha = stroke.opacity * 0.22;
+        ctx.globalAlpha = calculatePressureOpacity(stroke.opacity * 0.22, pressure, true);
         ctx.fillRect(p.x + Math.cos(angle) * r, p.y + Math.sin(angle) * r, 1.5, 1.5);
       }
     }
@@ -779,10 +1388,11 @@ export function renderStrokeToContext(
   if (stroke.tool === 'watercolor') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    drawQuadraticPath(ctx, stroke.points);
+    if (gradientEnd) ctx.shadowBlur = 0;
+    renderPathWithOptionalGradient(ctx);
     ctx.lineWidth = stroke.size * 1.25;
     ctx.globalAlpha = stroke.opacity * 0.3;
-    drawQuadraticPath(ctx, stroke.points);
+    renderPathWithOptionalGradient(ctx);
     ctx.restore();
     return;
   }
@@ -790,12 +1400,16 @@ export function renderStrokeToContext(
   if (stroke.tool === 'crayon') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    ctx.setLineDash([Math.max(2, stroke.size * 0.5), 1.5]);
-    drawQuadraticPath(ctx, stroke.points);
-    ctx.setLineDash([1.5, 2.5]);
+    if (!gradientEnd) {
+      ctx.setLineDash([Math.max(2, stroke.size * 0.5), 1.5]);
+    }
+    renderPathWithOptionalGradient(ctx, gradientEnd ? { dashEvery: 4 } : undefined);
+    if (!gradientEnd) {
+      ctx.setLineDash([1.5, 2.5]);
+    }
     ctx.translate(1, -1);
     ctx.globalAlpha = stroke.opacity * 0.45;
-    drawQuadraticPath(ctx, stroke.points);
+    renderPathWithOptionalGradient(ctx, gradientEnd ? { dashEvery: 3 } : undefined);
     ctx.restore();
     return;
   }
@@ -803,13 +1417,11 @@ export function renderStrokeToContext(
   if (stroke.tool === 'calligraphy') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    ctx.strokeStyle = getGradientOrColor(stroke.color);
-    ctx.fillStyle = stroke.color;
-    drawQuadraticPath(ctx, stroke.points);
+    renderPathWithOptionalGradient(ctx);
 
     if (stroke.size >= 4 && stroke.points.length > 1) {
       ctx.lineWidth = Math.max(0.8, stroke.size * 0.3);
-      ctx.strokeStyle = palette.bristleDark;
+      ctx.strokeStyle = gradientEnd ? 'rgba(15, 23, 42, 0.25)' : palette.bristleDark;
       ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.35);
       drawQuadraticPath(ctx, stroke.points);
     }
@@ -820,12 +1432,13 @@ export function renderStrokeToContext(
   if (stroke.tool === 'pencil') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    drawQuadraticPath(ctx, stroke.points);
+    if (gradientEnd) ctx.shadowBlur = 0;
+    renderPathWithOptionalGradient(ctx);
 
     if (stroke.size >= 2 && stroke.points.length > 1) {
       ctx.setLineDash([2, 3]);
       ctx.lineWidth = Math.max(1, stroke.size * 0.65);
-      ctx.strokeStyle = palette.bristleDark;
+      ctx.strokeStyle = gradientEnd ? 'rgba(15, 23, 42, 0.2)' : palette.bristleDark;
       ctx.globalAlpha = stroke.opacity * 0.25;
       drawQuadraticPath(ctx, stroke.points);
     }
@@ -836,9 +1449,9 @@ export function renderStrokeToContext(
   if (stroke.tool === 'highlighter') {
     ctx.save();
     applyToolStyleToContext(ctx, stroke, mode);
-    drawQuadraticPath(ctx, stroke.points);
+    renderPathWithOptionalGradient(ctx);
 
-    if (stroke.size >= 4 && stroke.points.length > 1) {
+    if (!gradientEnd && stroke.size >= 4 && stroke.points.length > 1) {
       ctx.lineWidth = Math.max(1, stroke.size * 2.1);
       ctx.strokeStyle = palette.bristleDark;
       ctx.globalAlpha = Math.min(1.0, stroke.opacity * 0.16);
@@ -850,7 +1463,7 @@ export function renderStrokeToContext(
 
   ctx.save();
   applyToolStyleToContext(ctx, stroke, mode);
-  drawQuadraticPath(ctx, stroke.points);
+  renderPathWithOptionalGradient(ctx);
   ctx.restore();
 }
 
@@ -1105,7 +1718,14 @@ export function exportStrokesToSvgString(
       const gradId = `paint_grad_${i}`;
       const p1 = stroke.points[0];
       const p2 = stroke.points[stroke.points.length - 1];
-      defs += `    <linearGradient id="${gradId}" x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" gradientUnits="userSpaceOnUse">\n      <stop offset="0%" stop-color="${stroke.color}" />\n      <stop offset="100%" stop-color="${stroke.colorEnd}" />\n    </linearGradient>\n`;
+      const stops = buildMultiStopGradientColors(stroke.color, stroke.colorEnd, 5);
+      const stopXml = stops
+        .map((stopColor, stopIdx) => {
+          const pct = Math.round((stopIdx / (stops.length - 1)) * 100);
+          return `      <stop offset="${pct}%" stop-color="${stopColor}" />`;
+        })
+        .join('\n');
+      defs += `    <linearGradient id="${gradId}" x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" gradientUnits="userSpaceOnUse">\n${stopXml}\n    </linearGradient>\n`;
       bodyStrokeAttr = `stroke="url(#${gradId})"`;
     }
 
@@ -1186,4 +1806,65 @@ export function calculateStrokeBounds(stroke: Stroke): {
     maxX: maxX + padding,
     maxY: maxY + padding,
   };
+}
+
+/**
+ * Mirrors all vector/brush strokes across the full canvas horizontally or vertically
+ * while preserving layer assignment. Flags raster/text strokes so CanvasStudio can apply
+ * pixel-level flipping when raster bitmaps or text annotations are present.
+ */
+export function flipCanvasStrokes(
+  strokes: Stroke[],
+  axis: 'horizontal' | 'vertical',
+  canvasWidth: number,
+  canvasHeight: number
+): { strokes: Stroke[]; requiresRasterFallback: boolean } {
+  const requiresRasterFallback = strokes.some(
+    (s) => Boolean(s.rasterDataUrl) || s.tool === 'text'
+  );
+  if (requiresRasterFallback) {
+    return { strokes, requiresRasterFallback: true };
+  }
+
+  const transformed = strokes.map((stroke) => {
+    const flippedPoints = stroke.points.map((p) => ({
+      ...p,
+      x: axis === 'horizontal' ? Math.round((canvasWidth - p.x) * 10) / 10 : p.x,
+      y: axis === 'vertical' ? Math.round((canvasHeight - p.y) * 10) / 10 : p.y,
+    }));
+
+    const flippedRect = stroke.rect
+      ? {
+          ...stroke.rect,
+          x:
+            axis === 'horizontal'
+              ? Math.round((canvasWidth - stroke.rect.x - stroke.rect.width) * 10) / 10
+              : stroke.rect.x,
+          y:
+            axis === 'vertical'
+              ? Math.round((canvasHeight - stroke.rect.y - stroke.rect.height) * 10) / 10
+              : stroke.rect.y,
+        }
+      : undefined;
+
+    const needsShapeFlipFlag =
+      stroke.tool === 'shape' &&
+      stroke.shapeType !== 'line' &&
+      stroke.shapeType !== 'curve' &&
+      stroke.shapeType !== 'polygon';
+
+    return {
+      ...stroke,
+      points: flippedPoints,
+      ...(flippedRect ? { rect: flippedRect } : {}),
+      ...(needsShapeFlipFlag
+        ? {
+            flipH: axis === 'horizontal' ? !stroke.flipH : stroke.flipH,
+            flipV: axis === 'vertical' ? !stroke.flipV : stroke.flipV,
+          }
+        : {}),
+    };
+  });
+
+  return { strokes: transformed, requiresRasterFallback: false };
 }

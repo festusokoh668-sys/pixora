@@ -40,9 +40,15 @@ import {
   createStroke,
   createMirroredStrokes,
   toggleMirrorAxis,
+  getMirrorModeStatusMessage,
   clampSymmetryAxisRatio,
-  stabilizePointerPoint,
+  getStabilizerConfig,
+  stabilizeCursorStream,
   smoothStrokePoints,
+  flipCanvasStrokes,
+  resolvePointerEventPressure,
+  doesPointerEventProvidePressure,
+  resolveStrokeGradientEnd,
   renderStrokeToContext,
   preloadStrokeRasterImage,
 } from '../utils/drawing';
@@ -61,7 +67,12 @@ import {
 } from '../utils/viewport';
 import { generateOutlineTraceDataUrl, generateFallbackSvgDataUrl } from '../utils/edgeDetection';
 import { generateRulerTicks, clientCoordToRulerCanvasPx } from '../utils/rulers';
-import { applyLayerFilterToContext, getLayerFilterSpec } from '../utils/filters';
+import {
+  applyLayerFilterToContext,
+  clampBrightnessDelta,
+  getLayerFilterSpec,
+  LayerFilterOptions,
+} from '../utils/filters';
 
 export interface CanvasStudioHandle {
   cutSelection: () => void;
@@ -72,7 +83,16 @@ export interface CanvasStudioHandle {
   deleteSelection: () => void;
   cropToSelection: () => void;
   rotateOrFlip: (action: 'cw90' | 'ccw90' | '180' | 'flipH' | 'flipV') => void;
-  applyFilter: (filter: LayerFilterType) => void;
+  flipHorizontal: () => void;
+  flipVertical: () => void;
+  toggleMirrorAxis: (axis: 'horizontal' | 'vertical') => void;
+  toggleMirrorHorizontal: () => void;
+  toggleMirrorVertical: () => void;
+  applyFilter: (filter: LayerFilterType, options?: LayerFilterOptions) => void;
+  applyGrayscaleFilter: () => void;
+  applySepiaFilter: () => void;
+  applyBrightnessFilter: (delta?: number) => void;
+  applyInvertFilter: () => void;
   exportRaster: (format: 'png' | 'jpg', quality?: number) => string | null;
   clearCanvas: () => void;
   getCanPaste: () => boolean;
@@ -86,7 +106,10 @@ interface CanvasStudioProps {
   color: string;
   secondaryColor?: string;
   size: number;
+  stabilization?: number;
+  pressureSensitive?: boolean;
   opacity: number;
+  isGradientBrush?: boolean;
   colorEnd?: string | null;
   paintFinish?: PaintFinish;
   strokes: Stroke[];
@@ -130,7 +153,10 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       color,
       secondaryColor = '#FFFFFF',
       size,
+      stabilization = 45,
+      pressureSensitive = true,
       opacity,
+      isGradientBrush = false,
       colorEnd,
       paintFinish,
       strokes,
@@ -170,6 +196,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
     const isDrawingRef = useRef<boolean>(false);
     const currentStrokeRef = useRef<Stroke | null>(null);
+    const rawPointerBufferRef = useRef<Point[]>([]);
     const canvasRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
     const activeRafIdRef = useRef<number | null>(null);
 
@@ -319,9 +346,11 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
     const handleToggleMirrorAxis = useCallback(
       (axis: 'horizontal' | 'vertical') => {
-        updateSymmetryMode((prev) => toggleMirrorAxis(prev, axis));
+        const nextMode = toggleMirrorAxis(symmetryMode, axis);
+        updateSymmetryMode(nextMode);
+        onNotify?.(getMirrorModeStatusMessage(nextMode));
       },
-      [updateSymmetryMode]
+      [symmetryMode, updateSymmetryMode, onNotify]
     );
 
     const handleSymmetryGuidePointerDown = useCallback(
@@ -717,15 +746,20 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
       if (!currentStroke) return;
 
-      // Apply live light smoothing on freehand tools so preview matches final silky output
+      // Apply live smoothing scaled by Stabilization intensity on freehand strokes
+      const stabilizerCfg = getStabilizerConfig(stabilization);
       const previewStroke: Stroke =
         currentStroke.tool !== 'shape' &&
         currentStroke.tool !== 'text' &&
         currentStroke.tool !== 'select' &&
+        stabilizerCfg.previewPasses > 0 &&
         currentStroke.points.length >= 4
           ? {
               ...currentStroke,
-              points: smoothStrokePoints(currentStroke.points, { passes: 1, subdivide: false }),
+              points: smoothStrokePoints(currentStroke.points, {
+                passes: stabilizerCfg.previewPasses,
+                subdivide: false,
+              }),
             }
           : currentStroke;
 
@@ -811,6 +845,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       templateOpacity,
       symmetryMode,
       symmetryAxisRatio,
+      stabilization,
       effectiveActiveLayer,
       drawStroke,
     ]);
@@ -851,6 +886,102 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       [canvasDimensions]
     );
 
+    const applyLayerPixelFilter = useCallback(
+      (filter: LayerFilterType, options?: LayerFilterOptions) => {
+        const width = canvasDimensions.width;
+        const height = canvasDimensions.height;
+        const activeLayerStrokes = strokes.filter(
+          (s) => resolveStrokeLayerId(s, effectiveLayers) === effectiveActiveLayerId
+        );
+
+        if (activeLayerStrokes.length === 0 && (filter !== 'invert' || Boolean(activeTemplate))) {
+          onNotify?.(`Draw something on ${effectiveActiveLayer.name} before applying a filter`);
+          return;
+        }
+
+        const brightnessDelta =
+          filter === 'brightness'
+            ? clampBrightnessDelta(options?.brightnessDelta ?? 25)
+            : undefined;
+        if (filter === 'brightness' && brightnessDelta === 0) {
+          onNotify?.('Move Brightness away from 0% before applying');
+          return;
+        }
+
+        let sourceLayerCanvas = activeLayerCanvasRef.current;
+        if (
+          !sourceLayerCanvas ||
+          !effectiveActiveLayer.visible ||
+          sourceLayerCanvas.width !== width ||
+          sourceLayerCanvas.height !== height
+        ) {
+          sourceLayerCanvas = document.createElement('canvas');
+          sourceLayerCanvas.width = width;
+          sourceLayerCanvas.height = height;
+          const sctx = sourceLayerCanvas.getContext('2d', { willReadFrequently: true });
+          if (sctx) {
+            for (const s of activeLayerStrokes) {
+              renderStrokeToContext(sctx, s, 'canvas');
+            }
+          }
+        }
+
+        const filteredCanvas = document.createElement('canvas');
+        filteredCanvas.width = width;
+        filteredCanvas.height = height;
+        const fctx = filteredCanvas.getContext('2d', { willReadFrequently: true });
+        if (!fctx) return;
+
+        applyLayerFilterToContext(fctx, sourceLayerCanvas, width, height, filter, {
+          opaquePaperBackground:
+            filter === 'invert' && !activeTemplate && effectiveLayers[0]?.id === effectiveActiveLayerId,
+          brightnessDelta,
+        });
+
+        const filteredDataUrl = filteredCanvas.toDataURL('image/png');
+        const spec = getLayerFilterSpec(filter);
+        const filterOp: Stroke = {
+          id: `op_filter_${filter}_${Date.now()}`,
+          layerId: effectiveActiveLayerId,
+          tool: 'select',
+          color: '#000000',
+          size: 1,
+          opacity: 1,
+          points: [],
+          operation: 'replace-bitmap',
+          rect: { x: 0, y: 0, width, height },
+          rasterDataUrl: filteredDataUrl,
+        };
+
+        const commitFiltered = () => {
+          const otherLayerStrokes = strokes.filter(
+            (s) => resolveStrokeLayerId(s, effectiveLayers) !== effectiveActiveLayerId
+          );
+          onStrokesChange([...otherLayerStrokes, filterOp]);
+          const detail =
+            filter === 'brightness' && brightnessDelta !== undefined
+              ? ` (${brightnessDelta > 0 ? `+${brightnessDelta}` : brightnessDelta}%)`
+              : '';
+          onNotify?.(`Applied ${spec.label}${detail} filter to ${effectiveActiveLayer.name}`);
+        };
+
+        const preloaded = preloadStrokeRasterImage(filteredDataUrl, commitFiltered);
+        if (preloaded && preloaded.complete && preloaded.naturalWidth > 0) {
+          commitFiltered();
+        }
+      },
+      [
+        activeTemplate,
+        canvasDimensions,
+        effectiveActiveLayer,
+        effectiveActiveLayerId,
+        effectiveLayers,
+        onNotify,
+        onStrokesChange,
+        strokes,
+      ]
+    );
+
     // Imperative Clipboard, Selection, Crop, Rotate/Flip actions called by PaintRibbon
     useImperativeHandle(
       ref,
@@ -869,6 +1000,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           }
           isDrawingRef.current = false;
           currentStrokeRef.current = null;
+          rawPointerBufferRef.current = [];
           polygonDraftRef.current = null;
           curveStageRef.current = null;
           selectionDragStartRef.current = null;
@@ -1096,6 +1228,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
               }
               const replaceWhole: Stroke = {
                 id: `op_rot_full_${Date.now()}`,
+                layerId: effectiveActiveLayerId,
                 tool: 'select',
                 color: '#000000',
                 size: 1,
@@ -1105,74 +1238,126 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 rect: { x: 0, y: 0, width: outW, height: outH },
                 rasterDataUrl: transformedUrl,
               };
-              onStrokesChange([...strokes, replaceWhole]);
+              onStrokesChange([replaceWhole]);
             }
           };
           img.src = srcUrl;
         },
-        applyFilter: (filter) => {
-          const width = canvasDimensions.width;
-          const height = canvasDimensions.height;
-          const activeLayerStrokes = strokes.filter(
-            (s) => resolveStrokeLayerId(s, effectiveLayers) === effectiveActiveLayerId
+        flipHorizontal: () => {
+          const { strokes: flipped, requiresRasterFallback } = flipCanvasStrokes(
+            strokes,
+            'horizontal',
+            canvasDimensions.width,
+            canvasDimensions.height
           );
-
-          if (activeLayerStrokes.length === 0 && (filter !== 'invert' || Boolean(activeTemplate))) {
-            onNotify?.(`Draw something on ${effectiveActiveLayer.name} before applying a filter`);
+          if (!requiresRasterFallback) {
+            onStrokesChange(flipped);
+            onNotify?.('Flipped canvas horizontally');
             return;
           }
-
-          let sourceLayerCanvas = activeLayerCanvasRef.current;
-          if (!sourceLayerCanvas || !effectiveActiveLayer.visible) {
-            sourceLayerCanvas = document.createElement('canvas');
-            sourceLayerCanvas.width = width;
-            sourceLayerCanvas.height = height;
-            const sctx = sourceLayerCanvas.getContext('2d');
-            if (sctx) {
-              for (const s of activeLayerStrokes) {
-                renderStrokeToContext(sctx, s, 'canvas');
-              }
-            }
-          }
-
-          const filteredCanvas = document.createElement('canvas');
-          filteredCanvas.width = width;
-          filteredCanvas.height = height;
-          const fctx = filteredCanvas.getContext('2d');
-          if (!fctx) return;
-
-          applyLayerFilterToContext(fctx, sourceLayerCanvas, width, height, filter, {
-            opaquePaperBackground:
-              filter === 'invert' && !activeTemplate && effectiveLayers[0]?.id === effectiveActiveLayerId,
-          });
-
-          const filteredDataUrl = filteredCanvas.toDataURL('image/png');
-          const spec = getLayerFilterSpec(filter);
-          const filterOp: Stroke = {
-            id: `op_filter_${filter}_${Date.now()}`,
-            layerId: effectiveActiveLayerId,
-            tool: 'select',
-            color: '#000000',
-            size: 1,
-            opacity: 1,
-            points: [],
-            operation: 'replace-bitmap',
-            rect: { x: 0, y: 0, width, height },
-            rasterDataUrl: filteredDataUrl,
+          const fullRect = { x: 0, y: 0, width: canvasDimensions.width, height: canvasDimensions.height };
+          const srcUrl = captureCompositeRegion(fullRect);
+          if (!srcUrl) return;
+          const img = new Image();
+          img.onload = () => {
+            const tmp = document.createElement('canvas');
+            tmp.width = img.width;
+            tmp.height = img.height;
+            const tctx = tmp.getContext('2d');
+            if (!tctx) return;
+            tctx.save();
+            tctx.translate(img.width / 2, img.height / 2);
+            tctx.scale(-1, 1);
+            tctx.drawImage(img, -img.width / 2, -img.height / 2);
+            tctx.restore();
+            const flippedUrl = tmp.toDataURL('image/png');
+            preloadStrokeRasterImage(flippedUrl, () => rebuildBaseComposite());
+            const replaceWhole: Stroke = {
+              id: `op_flip_h_${Date.now()}`,
+              layerId: effectiveActiveLayerId,
+              tool: 'select',
+              color: '#000000',
+              size: 1,
+              opacity: 1,
+              points: [],
+              operation: 'replace-bitmap',
+              rect: fullRect,
+              rasterDataUrl: flippedUrl,
+            };
+            onStrokesChange([replaceWhole]);
+            onNotify?.('Flipped canvas horizontally');
           };
-
-          const commitFiltered = () => {
-            const otherLayerStrokes = strokes.filter(
-              (s) => resolveStrokeLayerId(s, effectiveLayers) !== effectiveActiveLayerId
-            );
-            onStrokesChange([...otherLayerStrokes, filterOp]);
-            onNotify?.(`Applied ${spec.label} filter to ${effectiveActiveLayer.name}`);
-          };
-
-          const preloaded = preloadStrokeRasterImage(filteredDataUrl, commitFiltered);
-          if (preloaded && preloaded.complete && preloaded.naturalWidth > 0) {
-            commitFiltered();
+          img.src = srcUrl;
+        },
+        flipVertical: () => {
+          const { strokes: flipped, requiresRasterFallback } = flipCanvasStrokes(
+            strokes,
+            'vertical',
+            canvasDimensions.width,
+            canvasDimensions.height
+          );
+          if (!requiresRasterFallback) {
+            onStrokesChange(flipped);
+            onNotify?.('Flipped canvas vertically');
+            return;
           }
+          const fullRect = { x: 0, y: 0, width: canvasDimensions.width, height: canvasDimensions.height };
+          const srcUrl = captureCompositeRegion(fullRect);
+          if (!srcUrl) return;
+          const img = new Image();
+          img.onload = () => {
+            const tmp = document.createElement('canvas');
+            tmp.width = img.width;
+            tmp.height = img.height;
+            const tctx = tmp.getContext('2d');
+            if (!tctx) return;
+            tctx.save();
+            tctx.translate(img.width / 2, img.height / 2);
+            tctx.scale(1, -1);
+            tctx.drawImage(img, -img.width / 2, -img.height / 2);
+            tctx.restore();
+            const flippedUrl = tmp.toDataURL('image/png');
+            preloadStrokeRasterImage(flippedUrl, () => rebuildBaseComposite());
+            const replaceWhole: Stroke = {
+              id: `op_flip_v_${Date.now()}`,
+              layerId: effectiveActiveLayerId,
+              tool: 'select',
+              color: '#000000',
+              size: 1,
+              opacity: 1,
+              points: [],
+              operation: 'replace-bitmap',
+              rect: fullRect,
+              rasterDataUrl: flippedUrl,
+            };
+            onStrokesChange([replaceWhole]);
+            onNotify?.('Flipped canvas vertically');
+          };
+          img.src = srcUrl;
+        },
+        toggleMirrorAxis: (axis) => {
+          handleToggleMirrorAxis(axis);
+        },
+        toggleMirrorHorizontal: () => {
+          handleToggleMirrorAxis('horizontal');
+        },
+        toggleMirrorVertical: () => {
+          handleToggleMirrorAxis('vertical');
+        },
+        applyFilter: (filter, options) => {
+          applyLayerPixelFilter(filter, options);
+        },
+        applyGrayscaleFilter: () => {
+          applyLayerPixelFilter('grayscale');
+        },
+        applySepiaFilter: () => {
+          applyLayerPixelFilter('sepia');
+        },
+        applyBrightnessFilter: (delta = 25) => {
+          applyLayerPixelFilter('brightness', { brightnessDelta: delta });
+        },
+        applyInvertFilter: () => {
+          applyLayerPixelFilter('invert');
         },
         exportRaster: (format, quality = 0.92) => {
           const width = Math.max(1, canvasDimensions.width);
@@ -1195,11 +1380,12 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       }),
       [
         activeTemplate,
+        applyLayerPixelFilter,
         canvasDimensions,
+        handleToggleMirrorAxis,
         selectionRect,
         strokes,
         effectiveLayers,
-        effectiveActiveLayer,
         effectiveActiveLayerId,
         secondaryColor,
         captureCompositeRegion,
@@ -1267,6 +1453,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         }
         isDrawingRef.current = false;
         currentStrokeRef.current = null;
+        rawPointerBufferRef.current = [];
         canvasRectRef.current = null;
         const canvas = canvasRef.current;
         const base = baseCompositeCanvasRef.current;
@@ -1696,8 +1883,18 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         canvas.setPointerCapture(e.pointerId);
       } catch {}
 
-      const pressure = typeof e.nativeEvent.pressure === 'number' && e.nativeEvent.pressure > 0 ? e.nativeEvent.pressure : 0.5;
+      const pressure = resolvePointerEventPressure(e.nativeEvent, {
+        enabled: pressureSensitive,
+      });
       const firstPt: Point = { ...pt, pressure };
+      rawPointerBufferRef.current = [firstPt];
+      const strokeGradientEnd =
+        tool !== 'eraser'
+          ? resolveStrokeGradientEnd(activeStrokeColor, activeShapeFillColor, {
+              isGradientBrush,
+              explicitColorEnd: colorEnd,
+            })
+          : undefined;
       const newStroke: Stroke = {
         ...createStroke(
           tool,
@@ -1705,7 +1902,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           size,
           opacity,
           firstPt,
-          colorEnd || undefined,
+          strokeGradientEnd,
           paintFinish
         ),
         layerId: effectiveActiveLayerId,
@@ -1792,7 +1989,8 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
       // Freehand tools: High-precision coalesced points fed through live EMA Jitter Stabilizer
       canvasRectRef.current = rect;
-      const rawEvents = (e.nativeEvent as PointerEvent).getCoalescedEvents?.() || [e.nativeEvent];
+      const coalesced = (e.nativeEvent as PointerEvent).getCoalescedEvents?.();
+      const rawEvents = coalesced && coalesced.length > 0 ? coalesced : [e.nativeEvent];
       const points = currentStrokeRef.current.points;
 
       for (const ev of rawEvents) {
@@ -1803,15 +2001,30 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           canvasDimensions.width,
           canvasDimensions.height
         );
-        const pressure = typeof ev.pressure === 'number' && ev.pressure > 0 ? ev.pressure : 0.5;
-        const last = points[points.length - 1];
-        if (!last) {
-          points.push({ ...pt, pressure });
-        } else {
-          const stabilized = stabilizePointerPoint(last, { ...pt, pressure }, 0.45, 1.2);
-          if (stabilized) {
-            points.push(stabilized);
-          }
+        const pressure = resolvePointerEventPressure(ev, {
+          enabled: pressureSensitive,
+        });
+        const rawSample: Point = { ...pt, pressure };
+        rawPointerBufferRef.current.push(rawSample);
+        if (rawPointerBufferRef.current.length > 24) {
+          rawPointerBufferRef.current.shift();
+        }
+        const last = points[points.length - 1] ?? null;
+        const stabilized = stabilizeCursorStream(
+          rawPointerBufferRef.current,
+          last,
+          stabilization
+        );
+        if (stabilized) {
+          points.push(stabilized);
+        } else if (
+          pressureSensitive &&
+          last &&
+          Math.abs((last.pressure ?? 0.5) - pressure) >= 0.06
+        ) {
+          // Stationary stylus press change: smoothly update pressure on active tip
+          const prevP = last.pressure ?? 0.5;
+          last.pressure = Math.round((prevP + (pressure - prevP) * 0.5) * 1000) / 1000;
         }
       }
 
@@ -1914,14 +2127,45 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         return;
       }
 
+      // Append final pointer-up location when moved beyond last point so fast pen sweeps finish crisply
+      if (completedStroke.tool !== 'shape' && completedStroke.tool !== 'text') {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const upRect = canvas.getBoundingClientRect();
+          const endPt = getCanvasCoordinates(
+            e.clientX,
+            e.clientY,
+            upRect,
+            canvasDimensions.width,
+            canvasDimensions.height
+          );
+          const lastCommitted = completedStroke.points[completedStroke.points.length - 1];
+          const releasePressure =
+            pressureSensitive && doesPointerEventProvidePressure(e.nativeEvent)
+              ? resolvePointerEventPressure(e.nativeEvent, { enabled: true })
+              : lastCommitted?.pressure ?? 0.5;
+          if (
+            lastCommitted &&
+            Math.hypot(endPt.x - lastCommitted.x, endPt.y - lastCommitted.y) >= 1.5
+          ) {
+            completedStroke.points.push({ ...endPt, pressure: releasePressure });
+          }
+        }
+      }
+
       currentStrokeRef.current = null;
+      rawPointerBufferRef.current = [];
       onSelectionSizeChange?.(null);
 
-      // Final Multi-Pass Chaikin + Corner-Aware Stroke Smoothing on freehand strokes
+      // Final Multi-Pass Chaikin + Corner-Aware Stroke Smoothing scaled by Stabilization intensity
+      const stabilizerCfg = getStabilizerConfig(stabilization);
       const finalPoints =
-        completedStroke.tool === 'shape'
+        completedStroke.tool === 'shape' || stabilizerCfg.finalPasses <= 0
           ? completedStroke.points
-          : smoothStrokePoints(completedStroke.points, { passes: 3, subdivide: true });
+          : smoothStrokePoints(completedStroke.points, {
+              passes: stabilizerCfg.finalPasses,
+              subdivide: stabilizerCfg.subdivide,
+            });
 
       const finalizedStroke: Stroke = {
         ...completedStroke,
@@ -2553,6 +2797,10 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
               {/* Main Drawing Canvas Surface */}
               <canvas
                 ref={canvasRef}
+                data-testid="paint-canvas"
+                data-gradient-brush={isGradientBrush ? 'true' : 'false'}
+                data-pressure-sensitive={pressureSensitive ? 'true' : 'false'}
+                data-mirror-mode={symmetryMode}
                 width={canvasDimensions.width}
                 height={canvasDimensions.height}
                 onPointerDown={handlePointerDown}

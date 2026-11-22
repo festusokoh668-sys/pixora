@@ -260,13 +260,18 @@ test('getContainDrawRect centers square and portrait images without distortion o
 });
 
 test('toggleMirrorAxis toggles horizontal and vertical axes cleanly and supports quad combination', async () => {
-  const { toggleMirrorAxis } = await import('./drawing');
+  const { toggleMirrorAxis, getMirrorModeStatusMessage } = await import('./drawing');
 
   assert.equal(toggleMirrorAxis('none', 'horizontal'), 'horizontal');
   assert.equal(toggleMirrorAxis('horizontal', 'horizontal'), 'none');
   assert.equal(toggleMirrorAxis('horizontal', 'vertical'), 'quad');
   assert.equal(toggleMirrorAxis('quad', 'horizontal'), 'vertical');
   assert.equal(toggleMirrorAxis('vertical', 'vertical'), 'none');
+
+  assert.match(getMirrorModeStatusMessage('horizontal'), /Mirror Horizontal/i);
+  assert.match(getMirrorModeStatusMessage('vertical'), /Mirror Vertical/i);
+  assert.match(getMirrorModeStatusMessage('quad'), /Quad/i);
+  assert.match(getMirrorModeStatusMessage('none'), /off/i);
 });
 
 test('createMirroredStrokes reflects stroke points across canvas center for horizontal, vertical, and quad modes', async () => {
@@ -509,5 +514,360 @@ test('exportStrokesToSvgString serializes geometric shapes, text annotations, an
   assert.ok(!svg.includes('PIXORA Studio'));
 });
 
+test('getStabilizerConfig scales cursor window size, smoothing strength, and post-passes from intensity 0..100', async () => {
+  const { getStabilizerConfig } = await import('./drawing');
+
+  const off = getStabilizerConfig(0);
+  assert.equal(off.intensity, 0);
+  assert.equal(off.windowSize, 1);
+  assert.equal(off.smoothingStrength, 0);
+  assert.equal(off.previewPasses, 0);
+  assert.equal(off.finalPasses, 0);
+  assert.equal(off.subdivide, false);
+
+  const mid = getStabilizerConfig(50);
+  assert.equal(mid.intensity, 50);
+  assert.equal(mid.windowSize, 6);
+  assert.ok(mid.smoothingStrength > 0 && mid.smoothingStrength < 0.72);
+  assert.equal(mid.previewPasses, 1);
+  assert.equal(mid.finalPasses, 2);
+  assert.equal(mid.subdivide, true);
+
+  const max = getStabilizerConfig(150);
+  assert.equal(max.intensity, 100);
+  assert.equal(max.windowSize, 11);
+  assert.equal(max.smoothingStrength, 0.72);
+  assert.equal(max.finalPasses, 4);
+  assert.equal(max.subdivide, true);
+});
+
+test('averageCursorPositions returns raw sample at intensity 0 and averages cursor window progressively at higher intensities', async () => {
+  const { averageCursorPositions, stabilizeCursorStream } = await import('./drawing');
+
+  const jitterStream = [
+    { x: 0, y: 100, pressure: 0.5 },
+    { x: 10, y: 118, pressure: 0.5 },
+    { x: 20, y: 82, pressure: 0.5 },
+    { x: 30, y: 118, pressure: 0.5 },
+    { x: 40, y: 82, pressure: 0.5 },
+    { x: 50, y: 118, pressure: 0.5 },
+    { x: 60, y: 82, pressure: 0.5 },
+    { x: 70, y: 118, pressure: 0.5 },
+  ];
+
+  // Intensity 0 returns exact raw latest point
+  const rawLatest = averageCursorPositions(jitterStream, 0);
+  assert.deepEqual(rawLatest, { x: 70, y: 118, pressure: 0.5 });
+
+  // High stabilization averages across the oscillating y=+18/-18 window toward centerline y=100
+  const avgHigh = averageCursorPositions(jitterStream, 100);
+  assert.ok(Math.abs(avgHigh.y - 100) < Math.abs(rawLatest.y - 100), 'Averaged cursor Y should pull spike closer to centerline');
+  assert.ok(avgHigh.x < rawLatest.x && avgHigh.x > 40);
+
+  // Streaming comparison: intensity=100 yields dramatically lower perpendicular variance than intensity=0
+  const traceStream = (intensity: number) => {
+    const buffer: { x: number; y: number; pressure: number }[] = [];
+    const output: { x: number; y: number; pressure?: number }[] = [{ ...jitterStream[0] }];
+    buffer.push(jitterStream[0]);
+    for (let i = 1; i < jitterStream.length; i++) {
+      buffer.push(jitterStream[i]);
+      const next = stabilizeCursorStream(buffer, output[output.length - 1], intensity);
+      if (next) output.push(next);
+    }
+    return output;
+  };
+
+  const outRaw = traceStream(0);
+  const outSmooth = traceStream(100);
+  assert.equal(outRaw.length, jitterStream.length);
+  assert.equal(outRaw[outRaw.length - 1].y, 118);
+
+  const avgDeviation = (pts: { y: number }[]) =>
+    pts.reduce((acc, p) => acc + Math.abs(p.y - 100), 0) / pts.length;
+
+  assert.ok(
+    avgDeviation(outSmooth) < avgDeviation(outRaw) * 0.65,
+    `Expected strong jitter reduction (${avgDeviation(outSmooth)} vs ${avgDeviation(outRaw)})`
+  );
+});
+
+test('flipCanvasStrokes mirrors freehand, shape, and erase-rect strokes across canvas preserving layerId', async () => {
+  const { flipCanvasStrokes } = await import('./drawing');
+
+  const brushStroke = {
+    ...createStroke('brush', '#ED1C24', 8, 1, { x: 100, y: 120 }),
+    layerId: 'layer_2',
+  };
+  brushStroke.points.push({ x: 250, y: 180 });
+
+  const shapeStroke = {
+    id: 'shp_flip_1',
+    layerId: 'layer_1',
+    tool: 'shape' as const,
+    shapeType: 'arrow-right' as const,
+    outlineStyle: 'solid' as const,
+    fillStyle: 'none' as const,
+    color: '#1979CA',
+    size: 4,
+    opacity: 1,
+    points: [
+      { x: 50, y: 80 },
+      { x: 150, y: 140 },
+    ],
+  };
+
+  const eraseRect = {
+    id: 'erase_1',
+    layerId: 'layer_2',
+    tool: 'eraser' as const,
+    color: '#FFFFFF',
+    size: 1,
+    opacity: 1,
+    points: [],
+    operation: 'erase-rect' as const,
+    rect: { x: 40, y: 20, width: 100, height: 60 },
+  };
+
+  const horiz = flipCanvasStrokes([brushStroke, shapeStroke, eraseRect], 'horizontal', 1000, 600);
+  assert.equal(horiz.requiresRasterFallback, false);
+  assert.equal(horiz.strokes[0].layerId, 'layer_2');
+  assert.deepEqual(horiz.strokes[0].points.map((p) => [p.x, p.y]), [
+    [900, 120],
+    [750, 180],
+  ]);
+  assert.equal(horiz.strokes[1].flipH, true);
+  assert.equal(horiz.strokes[1].flipV, undefined);
+  assert.deepEqual(horiz.strokes[2].rect, { x: 860, y: 20, width: 100, height: 60 });
+
+  const vert = flipCanvasStrokes(horiz.strokes, 'vertical', 1000, 600);
+  assert.equal(vert.requiresRasterFallback, false);
+  assert.deepEqual(vert.strokes[0].points.map((p) => [p.x, p.y]), [
+    [900, 480],
+    [750, 420],
+  ]);
+  assert.equal(vert.strokes[1].flipH, true);
+  assert.equal(vert.strokes[1].flipV, true);
+  assert.deepEqual(vert.strokes[2].rect, { x: 860, y: 520, width: 100, height: 60 });
+
+  // Double horizontal + double vertical flip restores exact original coordinates
+  const roundTripH = flipCanvasStrokes(vert.strokes, 'horizontal', 1000, 600);
+  const roundTripBoth = flipCanvasStrokes(roundTripH.strokes, 'vertical', 1000, 600);
+  assert.deepEqual(roundTripBoth.strokes[0].points, brushStroke.points);
+  assert.deepEqual(roundTripBoth.strokes[2].rect, eraseRect.rect);
+
+  // Raster/text strokes signal pixel-level fallback cleanly
+  const withRaster = flipCanvasStrokes(
+    [
+      {
+        id: 'bmp_1',
+        tool: 'select',
+        color: '#000000',
+        size: 1,
+        opacity: 1,
+        points: [],
+        operation: 'replace-bitmap',
+        rect: { x: 0, y: 0, width: 1000, height: 600 },
+        rasterDataUrl: 'data:image/png;base64,AAA=',
+      },
+    ],
+    'horizontal',
+    1000,
+    600
+  );
+  assert.equal(withRaster.requiresRasterFallback, true);
+});
+
+test('resolvePointerEventPressure normalizes pen, touch, and mouse pressure values safely', async () => {
+  const { resolvePointerEventPressure } = await import('./drawing');
+
+  // Stylus zero/initial contact tapers down instead of jumping to 0.5
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 0 }), 0.05);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 0.12 }), 0.12);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 1.4 }), 1);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'touch', pressure: 0.75 }), 0.75);
+
+  // Mouse defaults (0 or undefined) map to neutral 0.5, while preserving explicit pressure
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: 0 }), 0.5);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: undefined }), 0.5);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: 0.5 }), 0.5);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: 0.9 }), 0.9);
+});
+
+test('calculatePressureWidth, samplePressureSpline, and drawQuadraticPath map pressure cleanly without joint artifacts', async () => {
+  const {
+    calculatePressureWidth,
+    calculatePressureOpacity,
+    samplePressureSpline,
+    drawQuadraticPath,
+  } = await import('./drawing');
+
+  assert.equal(calculatePressureWidth(10, 0.5), 10);
+  assert.ok(calculatePressureWidth(10, 0.05) < 3.5);
+  assert.ok(calculatePressureWidth(10, 1.0) > 17);
+  assert.equal(calculatePressureOpacity(0.8, 0.5, true), 0.8);
+  assert.equal(calculatePressureOpacity(0.8, 0.1, false), 0.8);
+
+  const spine = samplePressureSpline(
+    [
+      { x: 0, y: 50, pressure: 0.1 },
+      { x: 60, y: 50, pressure: 0.5 },
+      { x: 120, y: 50, pressure: 1.0 },
+    ],
+    10
+  );
+  assert.ok(spine.length > 10, 'Expected dense spine samples along spline');
+  assert.ok(spine[0].radius < 2.8, `Start radius should be thin (${spine[0].radius})`);
+  assert.ok(
+    spine[spine.length - 1].radius > 8.5,
+    `End radius should be thick (${spine[spine.length - 1].radius})`
+  );
+  for (let i = 1; i < spine.length; i++) {
+    assert.ok(
+      spine[i].radius >= spine[i - 1].radius - 0.01,
+      `Expected monotonic radius increase at sample ${i}`
+    );
+  }
+
+  let fillCount = 0;
+  let strokeCount = 0;
+  let closeCount = 0;
+  const mockCtx = {
+    lineWidth: 10,
+    globalAlpha: 1,
+    strokeStyle: '#1979CA',
+    fillStyle: '#000000',
+    save: () => {},
+    restore: () => {},
+    beginPath: () => {},
+    closePath: () => {
+      closeCount++;
+    },
+    moveTo: () => {},
+    lineTo: () => {},
+    quadraticCurveTo: () => {},
+    arc: () => {},
+    fill: () => {
+      fillCount++;
+    },
+    stroke: () => {
+      strokeCount++;
+    },
+  } as unknown as CanvasRenderingContext2D;
+
+  // Variable pressure draws ONE closed tapered envelope with fill() (zero overlapping stroke joints)
+  drawQuadraticPath(mockCtx, [
+    { x: 0, y: 50, pressure: 0.1 },
+    { x: 60, y: 50, pressure: 0.5 },
+    { x: 120, y: 50, pressure: 1.0 },
+  ]);
+  assert.equal(fillCount, 1);
+  assert.equal(closeCount, 1);
+  assert.equal(strokeCount, 0);
+  assert.equal(mockCtx.fillStyle, '#1979CA');
+
+  // Uniform pressure draws ONE continuous quadratic stroke()
+  fillCount = 0;
+  strokeCount = 0;
+  drawQuadraticPath(mockCtx, [
+    { x: 0, y: 50, pressure: 0.5 },
+    { x: 60, y: 50, pressure: 0.5 },
+    { x: 120, y: 50, pressure: 0.5 },
+  ]);
+  assert.equal(strokeCount, 1);
+  assert.equal(fillCount, 0);
+});
+
+test('resolvePointerEventPressure honors pressure sensitivity toggle and device pressure detection', async () => {
+  const { resolvePointerEventPressure, doesPointerEventProvidePressure } = await import('./drawing');
+
+  // Enabled: honors pen/hardware pressure values; non-pressure touch (0) defaults to neutral 0.5
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 0.9 }, { enabled: true }), 0.9);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 0 }, { enabled: true }), 0.05);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'touch', pressure: 0 }, { enabled: true }), 0.5);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'touch', pressure: 0.72 }, { enabled: true }), 0.72);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: 0.85 }, { enabled: true }), 0.85);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: 0 }, { enabled: true }), 0.5);
+
+  // Disabled: always locks to neutral 0.5 (1.0x fixed brush width)
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 0.95 }, { enabled: false }), 0.5);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'pen', pressure: 0.1 }, { enabled: false }), 0.5);
+  assert.equal(resolvePointerEventPressure({ pointerType: 'mouse', pressure: 0.9 }, { enabled: false }), 0.5);
+
+  // Device capability detection
+  assert.equal(doesPointerEventProvidePressure({ pointerType: 'pen', pressure: 0.5 }), true);
+  assert.equal(doesPointerEventProvidePressure({ pointerType: 'touch', pressure: 0 }), false);
+  assert.equal(doesPointerEventProvidePressure({ pointerType: 'touch', pressure: 0.72 }), true);
+  assert.equal(doesPointerEventProvidePressure({ pointerType: 'mouse', pressure: 0.5 }), false);
+  assert.equal(doesPointerEventProvidePressure({ pointerType: 'mouse', pressure: 0.82 }), true);
+});
+
+test('resolveStrokeGradientEnd, sampleGradientSpine, and drawGradientQuadraticPath create smooth multi-color transitions along strokes', async () => {
+  const {
+    resolveStrokeGradientEnd,
+    sampleGradientSpine,
+    drawGradientQuadraticPath,
+  } = await import('./drawing');
+
+  assert.equal(resolveStrokeGradientEnd('#164BCE', '#EF4444', { isGradientBrush: true }), '#EF4444');
+  assert.equal(resolveStrokeGradientEnd('#164BCE', '#EF4444', { isGradientBrush: false }), undefined);
+  assert.equal(
+    resolveStrokeGradientEnd('#164BCE', '#FFFFFF', { isGradientBrush: false, explicitColorEnd: '#00f0ff' }),
+    '#00F0FF'
+  );
+
+  // Curved path returning near origin still transitions smoothly by cumulative arc-length
+  const spine = sampleGradientSpine(
+    [
+      { x: 0, y: 0, pressure: 0.5 },
+      { x: 80, y: 0, pressure: 0.7 },
+      { x: 80, y: 80, pressure: 0.9 },
+      { x: 5, y: 10, pressure: 0.5 },
+    ],
+    10,
+    '#2563EB',
+    '#EF4444'
+  );
+  assert.ok(spine.length > 10);
+  assert.equal(spine[0].t, 0);
+  assert.equal(spine[0].color, '#2563EB');
+  assert.equal(spine[spine.length - 1].t, 1);
+  assert.equal(spine[spine.length - 1].color, '#EF4444');
+
+  const mid = spine[Math.floor(spine.length / 2)];
+  assert.ok(mid.t > 0.3 && mid.t < 0.7);
+  assert.notEqual(mid.color, '#2563EB');
+  assert.notEqual(mid.color, '#EF4444');
+
+  const fillColors: string[] = [];
+  const mockCtx = {
+    lineWidth: 10,
+    globalAlpha: 1,
+    strokeStyle: '#2563EB',
+    fillStyle: '#2563EB',
+    save: () => {},
+    restore: () => {},
+    beginPath: () => {},
+    arc: () => {},
+    fill: () => {
+      fillColors.push(String(mockCtx.fillStyle));
+    },
+  } as unknown as CanvasRenderingContext2D;
+
+  drawGradientQuadraticPath(
+    mockCtx,
+    [
+      { x: 0, y: 40, pressure: 0.5 },
+      { x: 60, y: 40, pressure: 0.8 },
+      { x: 120, y: 40, pressure: 0.5 },
+    ],
+    '#2563EB',
+    '#EF4444'
+  );
+
+  assert.ok(fillColors.length > 10);
+  assert.equal(fillColors[0], '#2563EB');
+  assert.equal(fillColors[fillColors.length - 1], '#EF4444');
+  assert.ok(new Set(fillColors).size > 5, 'Expected multiple intermediate gradient fill colors');
+});
 
 

@@ -61,7 +61,7 @@ export type PaintFinish = 'oil' | 'acrylic' | 'ink' | 'graphite' | 'watercolor';
 
 export type MirrorMode = 'none' | 'horizontal' | 'vertical' | 'quad';
 
-export type LayerFilterType = 'grayscale' | 'sepia' | 'invert';
+export type LayerFilterType = 'grayscale' | 'sepia' | 'brightness' | 'invert';
 
 export interface Point {
   x: number;

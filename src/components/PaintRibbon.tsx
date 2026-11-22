@@ -22,6 +22,7 @@ import {
   FileImage,
   FileCode,
   Download,
+  Layers,
 } from 'lucide-react';
 import {
   DrawingTemplate,
@@ -32,8 +33,10 @@ import {
   ShapeType,
   ToolType,
 } from '../types';
+import { LayerFilterOptions } from '../utils/filters';
 import { PAINT_SHAPES, QUICK_SHAPES } from '../utils/shapes';
 import { toggleMirrorAxis, resolveSymmetryToggle } from '../utils/drawing';
+import { buildMultiStopGradientColors } from '../utils/color';
 import {
   BRUSH_OPTIONS,
   RecentBrushSetting,
@@ -59,6 +62,12 @@ export interface PaintRibbonProps {
   onEditColors: () => void;
   currentSize: number;
   onSizeChange: (size: number) => void;
+  stabilization?: number;
+  onStabilizationChange?: (value: number) => void;
+  pressureSensitive?: boolean;
+  onPressureSensitiveChange?: (enabled: boolean) => void;
+  isGradientBrush?: boolean;
+  onGradientBrushChange?: (enabled: boolean) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -69,7 +78,6 @@ export interface PaintRibbonProps {
   onSave: () => void;
   onExportFormat?: (format: 'jpg' | 'png' | 'svg') => void;
   onPrint: () => void;
-  onMinimizeWindow?: () => void;
   onClearPage?: () => void;
   onExitStudio?: () => void;
   onCut: () => void;
@@ -83,6 +91,8 @@ export interface PaintRibbonProps {
   onDeleteSelection: () => void;
   onOpenResize: () => void;
   onRotateCanvas: (action: 'cw90' | 'ccw90' | '180' | 'flipH' | 'flipV') => void;
+  onFlipHorizontal?: () => void;
+  onFlipVertical?: () => void;
   zoomLevel: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -96,6 +106,7 @@ export interface PaintRibbonProps {
   onToggleStatusBar: () => void;
   showLayersSidebar?: boolean;
   onToggleLayersSidebar?: () => void;
+  layersCount?: number;
   onToggleFullScreen: () => void;
   activeTemplate: DrawingTemplate | null;
   lastClosedTemplate?: DrawingTemplate | null;
@@ -108,7 +119,12 @@ export interface PaintRibbonProps {
   onToggleRibbonPin?: () => void;
   mirrorMode?: MirrorMode;
   onMirrorModeChange?: (mode: MirrorMode) => void;
-  onApplyFilter?: (filter: LayerFilterType) => void;
+  onMirrorHorizontal?: () => void;
+  onMirrorVertical?: () => void;
+  onApplyFilter?: (filter: LayerFilterType, options?: LayerFilterOptions) => void;
+  onApplyGrayscale?: () => void;
+  onApplySepia?: () => void;
+  onApplyBrightness?: (delta: number) => void;
 }
 
 const WINDOWS_PAINT_PALETTE = [
@@ -147,6 +163,12 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onEditColors,
   currentSize,
   onSizeChange,
+  stabilization = 45,
+  onStabilizationChange,
+  pressureSensitive = true,
+  onPressureSensitiveChange,
+  isGradientBrush = false,
+  onGradientBrushChange,
   canUndo,
   canRedo,
   onUndo,
@@ -157,7 +179,6 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onSave,
   onExportFormat,
   onPrint,
-  onMinimizeWindow,
   onClearPage,
   onExitStudio,
   onCut,
@@ -171,6 +192,8 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onDeleteSelection,
   onOpenResize,
   onRotateCanvas,
+  onFlipHorizontal,
+  onFlipVertical,
   onZoomIn,
   onZoomOut,
   onResetZoom,
@@ -183,6 +206,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onToggleStatusBar,
   showLayersSidebar = true,
   onToggleLayersSidebar,
+  layersCount,
   onToggleFullScreen,
   activeTemplate,
   lastClosedTemplate,
@@ -195,7 +219,12 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onToggleRibbonPin,
   mirrorMode = 'none',
   onMirrorModeChange,
+  onMirrorHorizontal,
+  onMirrorVertical,
   onApplyFilter,
+  onApplyGrayscale,
+  onApplySepia,
+  onApplyBrightness,
 }) => {
   const [activeDropdown, setActiveDropdown] = useState<
     | null
@@ -210,6 +239,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
     | 'size'
   >(null);
   const [activeColorSlot, setActiveColorSlot] = useState<1 | 2>(1);
+  const [brightnessDelta, setBrightnessDelta] = useState<number>(25);
   const [shapeRowOffset, setShapeRowOffset] = useState<number>(0);
   const [recentBrushes, setRecentBrushes] = useState<RecentBrushSetting[]>(() =>
     recordRecentBrushSetting([], currentTool, currentSize, currentColor)
@@ -260,6 +290,21 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
     currentTool === 'crayon' ||
     currentTool === 'watercolor' ||
     currentTool === 'highlighter';
+
+  const gradientStops = buildMultiStopGradientColors(currentColor, secondaryColor, 3);
+  const gradientCss = `linear-gradient(90deg, ${gradientStops.join(', ')})`;
+
+  const handleToggleGradientBrush = () => {
+    const next = !isGradientBrush;
+    onGradientBrushChange?.(next);
+    if (
+      next &&
+      !isBrushTool &&
+      currentTool !== 'pencil'
+    ) {
+      onToolSelect('brush');
+    }
+  };
 
   // Render crisp Windows-Paint shape SVG icon
   const renderShapeMiniIcon = (shapeId: ShapeType) => {
@@ -344,8 +389,8 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
         }}
       />
 
-      {/* 1. Windows 10 Paint Style Title Bar */}
-      <div className="h-[28px] bg-white px-2 pr-0 flex items-center justify-between text-[12px] text-[#1E1E1E]">
+      {/* 1. Paint Studio Title Bar */}
+      <div className="h-[28px] bg-white px-2 flex items-center justify-between text-[12px] text-[#1E1E1E]">
         <div className="flex items-center gap-1 min-w-0">
           {/* App Paint Palette Icon */}
           <button
@@ -430,48 +475,6 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
             {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
           </span>
         </div>
-
-        {/* Classic Windows 10 Minimize, Maximize, Close Window Controls */}
-        <div className="flex items-center h-full shrink-0">
-          <button
-            type="button"
-            data-testid="window-minimize-btn"
-            onClick={() => onMinimizeWindow?.()}
-            className="w-[42px] h-full flex items-center justify-center hover:bg-[#E5E5E5] text-[#1E1E1E] cursor-pointer transition-colors"
-            title="Minimize"
-            aria-label="Minimize"
-          >
-            <span className="w-2.5 h-[1px] bg-[#1E1E1E] block" />
-          </button>
-          <button
-            type="button"
-            data-testid="window-maximize-btn"
-            onClick={onToggleFullScreen}
-            className="w-[42px] h-full flex items-center justify-center hover:bg-[#E5E5E5] text-[#1E1E1E] cursor-pointer transition-colors"
-            title="Maximize / Restore"
-            aria-label="Maximize"
-          >
-            <span className="w-2.5 h-2.5 border border-[#1E1E1E] block" />
-          </button>
-          <button
-            type="button"
-            data-testid="window-close-btn"
-            onClick={() => {
-              if (onClearPage) {
-                onClearPage();
-              } else if (onExitStudio) {
-                onExitStudio();
-              } else {
-                onNew();
-              }
-            }}
-            className="w-[42px] h-full flex items-center justify-center hover:bg-[#E81123] hover:text-white text-[#1E1E1E] cursor-pointer transition-colors text-[13px]"
-            title="Clear page"
-            aria-label="Clear page"
-          >
-            ✕
-          </button>
-        </div>
       </div>
 
       {/* 2. File | Home | View Tabs Strip */}
@@ -531,8 +534,31 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
           </button>
         </div>
 
-        {/* Right Tab-Bar Strip Controls: Pin, Collapse Chevron (^), Help (?) */}
+        {/* Right Tab-Bar Strip Controls: Layers Hide/Reveal, Pin, Collapse Chevron (^), Help (?) */}
         <div className="flex items-center gap-1 pb-0.5">
+          {onToggleLayersSidebar && (
+            <button
+              type="button"
+              data-testid="ribbon-layers-toggle-btn"
+              aria-expanded={showLayersSidebar}
+              aria-pressed={showLayersSidebar}
+              aria-label={showLayersSidebar ? 'Hide Layers panel' : 'Reveal Layers panel'}
+              onClick={onToggleLayersSidebar}
+              className={`h-5 px-1.5 flex items-center gap-1 text-[11px] border cursor-pointer ${
+                showLayersSidebar
+                  ? 'bg-[#D8E8FA] border-[#7DA2CE] text-[#1E1E1E] font-medium'
+                  : 'bg-white border-[#C6C7C8] hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[#1E1E1E]'
+              }`}
+              title={showLayersSidebar ? 'Hide Layers panel' : 'Reveal Layers panel'}
+            >
+              <Layers className="w-3 h-3 text-[#1979CA]" />
+              <span>Layers</span>
+              {typeof layersCount === 'number' && (
+                <span className="text-[10px] tabular-nums text-[#555555]">({layersCount})</span>
+              )}
+            </button>
+          )}
+
           {onToggleRibbonPin && (
             <button
               type="button"
@@ -804,7 +830,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
 
               {/* Show or hide Group */}
               <div className="flex flex-col justify-between h-full px-3 border-r border-[#E0E1E2] shrink-0">
-                <div className="flex flex-col justify-center gap-1 pt-0.5 text-[11px]">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1.5 text-[11px]">
                   <label className="flex items-center gap-1.5 cursor-pointer" title="Show or hide pixel rulers (Alt+R)">
                     <input
                       type="checkbox"
@@ -864,8 +890,47 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                 <span className="text-[11px] text-[#666666] text-center leading-none">Display</span>
               </div>
 
-              {/* Symmetry Axis Guide Group */}
-              {onMirrorModeChange && (
+              {/* Flip Canvas Group (Horizontal & Vertical) */}
+              <div
+                data-testid="view-flip-group"
+                className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0"
+              >
+                <div className="flex items-center gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    data-testid="view-flip-horizontal-btn"
+                    aria-label="Flip Horizontal"
+                    onClick={() => (onFlipHorizontal ? onFlipHorizontal() : onRotateCanvas('flipH'))}
+                    className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    title="Flip canvas horizontally (Ctrl+F)"
+                  >
+                    <FlipHorizontal className="w-6 h-6 text-[#1979CA]" />
+                    <span className="text-[11px] leading-tight mt-0.5 text-center">
+                      Flip<br />Horizontal
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="view-flip-vertical-btn"
+                    aria-label="Flip Vertical"
+                    onClick={() => (onFlipVertical ? onFlipVertical() : onRotateCanvas('flipV'))}
+                    className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    title="Flip canvas vertically (Ctrl+Shift+F)"
+                  >
+                    <FlipVertical className="w-6 h-6 text-[#1979CA]" />
+                    <span className="text-[11px] leading-tight mt-0.5 text-center">
+                      Flip<br />Vertical
+                    </span>
+                  </button>
+                </div>
+                <span className="text-[11px] text-[#666666] text-center leading-none">
+                  Flip Canvas
+                </span>
+              </div>
+
+              {/* Symmetry & Mirror Axis Group */}
+              {(onMirrorModeChange || onMirrorHorizontal || onMirrorVertical) && (
                 <div
                   data-testid="view-symmetry-group"
                   className="flex flex-col justify-between h-full px-2.5 border-r border-[#E0E1E2] shrink-0"
@@ -874,9 +939,10 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     <button
                       type="button"
                       data-testid="ribbon-symmetry-toggle-btn"
+                      aria-label="Symmetry Mode"
                       aria-pressed={mirrorMode !== 'none'}
                       onClick={() =>
-                        onMirrorModeChange(
+                        onMirrorModeChange?.(
                           resolveSymmetryToggle(mirrorMode, lastSymmetryAxisRef.current)
                         )
                       }
@@ -885,9 +951,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                       }`}
-                      title="Toggle interactive Symmetry axis guide on canvas"
+                      title="Toggle Symmetry Mode (vertical or horizontal mirror axis on canvas)"
                     >
-                      <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                      <svg className="w-5 h-5 my-0.5" viewBox="0 0 24 24" fill="none">
                         <line
                           x1="12"
                           y1="3"
@@ -910,61 +976,76 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           strokeLinecap="round"
                         />
                       </svg>
-                      <span className="leading-tight mt-0.5 font-medium">Symmetry</span>
+                      <span className="leading-tight mt-0.5 font-medium text-center">
+                        Symmetry
+                        <br />
+                        Mode
+                      </span>
                     </button>
 
-                    <div className="flex flex-col gap-0.5 text-[11px]">
-                      <button
-                        type="button"
-                        data-testid="ribbon-mirror-h-btn"
-                        aria-pressed={mirrorMode === 'horizontal' || mirrorMode === 'quad'}
-                        onClick={() =>
-                          onMirrorModeChange(toggleMirrorAxis(mirrorMode, 'horizontal'))
-                        }
-                        className={`flex items-center gap-1.5 px-1.5 py-0.5 border cursor-pointer ${
-                          mirrorMode === 'horizontal' || mirrorMode === 'quad'
-                            ? 'bg-[#D8E8FA] border-[#7DA2CE]'
-                            : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
-                        }`}
-                        title="Vertical axis guide (mirror left & right)"
-                      >
-                        <FlipHorizontal className="w-3.5 h-3.5 text-[#1979CA]" />
-                        <span>Vertical</span>
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="ribbon-mirror-v-btn"
-                        aria-pressed={mirrorMode === 'vertical' || mirrorMode === 'quad'}
-                        onClick={() =>
-                          onMirrorModeChange(toggleMirrorAxis(mirrorMode, 'vertical'))
-                        }
-                        className={`flex items-center gap-1.5 px-1.5 py-0.5 border cursor-pointer ${
-                          mirrorMode === 'vertical' || mirrorMode === 'quad'
-                            ? 'bg-[#D8E8FA] border-[#7DA2CE]'
-                            : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
-                        }`}
-                        title="Horizontal axis guide (mirror top & bottom)"
-                      >
-                        <FlipVertical className="w-3.5 h-3.5 text-[#1979CA]" />
-                        <span>Horizontal</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      data-testid="ribbon-mirror-h-btn"
+                      aria-pressed={mirrorMode === 'horizontal' || mirrorMode === 'quad'}
+                      onClick={() =>
+                        onMirrorHorizontal
+                          ? onMirrorHorizontal()
+                          : onMirrorModeChange?.(toggleMirrorAxis(mirrorMode, 'horizontal'))
+                      }
+                      className={`flex flex-col items-center px-2 py-1 border cursor-pointer ${
+                        mirrorMode === 'horizontal' || mirrorMode === 'quad'
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                          : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                      }`}
+                      title="Mirror Horizontal — draw mirrored strokes left & right across vertical axis"
+                    >
+                      <FlipHorizontal className="w-5 h-5 my-0.5 text-[#1979CA]" />
+                      <span className="text-[11px] leading-tight mt-0.5 text-center">
+                        Mirror{' '}
+                        <br />
+                        Horizontal
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="ribbon-mirror-v-btn"
+                      aria-pressed={mirrorMode === 'vertical' || mirrorMode === 'quad'}
+                      onClick={() =>
+                        onMirrorVertical
+                          ? onMirrorVertical()
+                          : onMirrorModeChange?.(toggleMirrorAxis(mirrorMode, 'vertical'))
+                      }
+                      className={`flex flex-col items-center px-2 py-1 border cursor-pointer ${
+                        mirrorMode === 'vertical' || mirrorMode === 'quad'
+                          ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                          : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                      }`}
+                      title="Mirror Vertical — draw mirrored strokes top & bottom across horizontal axis"
+                    >
+                      <FlipVertical className="w-5 h-5 my-0.5 text-[#1979CA]" />
+                      <span className="text-[11px] leading-tight mt-0.5 text-center">
+                        Mirror{' '}
+                        <br />
+                        Vertical
+                      </span>
+                    </button>
 
                     <button
                       type="button"
                       data-testid="ribbon-mirror-quad-btn"
                       aria-pressed={mirrorMode === 'quad'}
                       onClick={() =>
-                        onMirrorModeChange(mirrorMode === 'quad' ? 'none' : 'quad')
+                        onMirrorModeChange?.(mirrorMode === 'quad' ? 'none' : 'quad')
                       }
                       className={`flex flex-col items-center px-2 py-1 border text-[11px] cursor-pointer ${
                         mirrorMode === 'quad'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
                       }`}
-                      title="4-Way Quad Symmetry (Vertical + Horizontal axes)"
+                      title="4-Way Quad Symmetry (Horizontal + Vertical mirror)"
                     >
-                      <span className="font-bold text-[#1979CA] text-[12px] leading-5">4x</span>
+                      <span className="font-bold text-[#1979CA] text-[12px] leading-6">4x</span>
                       <span className="mt-0.5">Quad</span>
                     </button>
                   </div>
@@ -974,19 +1055,21 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                 </div>
               )}
 
-              {/* Filters Group (Grayscale, Sepia, Invert) */}
-              {onApplyFilter && (
+              {/* Filters Group (Grayscale, Sepia, Brightness, Invert) */}
+              {(onApplyFilter || onApplyGrayscale || onApplySepia || onApplyBrightness) && (
                 <div
                   data-testid="view-filters-group"
                   className="flex flex-col justify-between h-full px-2.5 border-r border-[#E0E1E2] shrink-0"
                 >
-                  <div className="flex items-center gap-1 pt-0.5">
+                  <div className="flex items-center gap-1.5 pt-0.5">
                     <button
                       type="button"
                       data-testid="ribbon-filter-grayscale-btn"
-                      onClick={() => onApplyFilter('grayscale')}
+                      onClick={() =>
+                        onApplyGrayscale ? onApplyGrayscale() : onApplyFilter?.('grayscale')
+                      }
                       className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
-                      title="Convert current drawing layer to grayscale"
+                      title="Convert current layer pixel data to grayscale"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
                         <circle cx="10" cy="10" r="7" fill="#D4D7DC" stroke="#45505E" strokeWidth="1.2" />
@@ -999,9 +1082,11 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     <button
                       type="button"
                       data-testid="ribbon-filter-sepia-btn"
-                      onClick={() => onApplyFilter('sepia')}
+                      onClick={() =>
+                        onApplySepia ? onApplySepia() : onApplyFilter?.('sepia')
+                      }
                       className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
-                      title="Apply warm sepia tone to current drawing layer"
+                      title="Apply warm sepia tone to current layer pixel data"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
                         <rect x="3" y="4" width="14" height="12" rx="1" fill="#E8D2B0" stroke="#8A6030" strokeWidth="1.2" />
@@ -1011,10 +1096,114 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       <span className="mt-1">Sepia</span>
                     </button>
 
+                    {/* Brightness Pixel Adjustment Control */}
+                    <div
+                      data-testid="ribbon-filter-brightness-control"
+                      className="w-[132px] px-1.5 py-1 border border-[#DADBDC] bg-[#F8FAFC] flex flex-col justify-center gap-0.5"
+                      title="Adjust brightness of current layer pixel data"
+                    >
+                      <div className="flex items-center justify-between gap-1 leading-none">
+                        <button
+                          type="button"
+                          data-testid="ribbon-filter-brightness-btn"
+                          onClick={() => {
+                            const delta = brightnessDelta === 0 ? 25 : brightnessDelta;
+                            if (brightnessDelta === 0) setBrightnessDelta(delta);
+                            if (onApplyBrightness) {
+                              onApplyBrightness(delta);
+                            } else {
+                              onApplyFilter?.('brightness', { brightnessDelta: delta });
+                            }
+                          }}
+                          className="flex items-center gap-1 text-[10.5px] font-medium text-[#1E1E1E] hover:text-[#1979CA] cursor-pointer"
+                          title="Apply selected brightness adjustment to current layer"
+                        >
+                          <svg className="w-3 h-3 shrink-0" viewBox="0 0 16 16" fill="none">
+                            <circle cx="8" cy="8" r="3" fill="#F5B324" stroke="#B57B0A" strokeWidth="1" />
+                            <path
+                              d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.4 3.4L4.5 4.5M11.5 11.5L12.6 12.6M12.6 3.4L11.5 4.5M4.5 11.5L3.4 12.6"
+                              stroke="#B57B0A"
+                              strokeWidth="1.2"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          <span>Brightness</span>
+                        </button>
+                        <span
+                          data-testid="ribbon-filter-brightness-value"
+                          className="text-[10px] font-semibold tabular-nums text-[#1979CA]"
+                        >
+                          {brightnessDelta > 0 ? `+${brightnessDelta}%` : `${brightnessDelta}%`}
+                        </span>
+                      </div>
+                      <input
+                        data-testid="ribbon-filter-brightness-slider"
+                        type="range"
+                        min={-100}
+                        max={100}
+                        step={5}
+                        value={brightnessDelta}
+                        onChange={(e) => setBrightnessDelta(Number(e.target.value))}
+                        aria-label="Brightness adjustment"
+                        className="w-full h-3 accent-[#1979CA] cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between text-[9px] text-[#555555] leading-none">
+                        <button
+                          type="button"
+                          data-testid="ribbon-filter-darker-btn"
+                          onClick={() => {
+                            setBrightnessDelta(-20);
+                            if (onApplyBrightness) {
+                              onApplyBrightness(-20);
+                            } else {
+                              onApplyFilter?.('brightness', { brightnessDelta: -20 });
+                            }
+                          }}
+                          className="hover:text-[#1979CA] cursor-pointer px-0.5"
+                          title="Darken current layer by 20%"
+                        >
+                          -20%
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="ribbon-filter-brightness-apply-btn"
+                          onClick={() => {
+                            const delta = brightnessDelta === 0 ? 25 : brightnessDelta;
+                            if (brightnessDelta === 0) setBrightnessDelta(delta);
+                            if (onApplyBrightness) {
+                              onApplyBrightness(delta);
+                            } else {
+                              onApplyFilter?.('brightness', { brightnessDelta: delta });
+                            }
+                          }}
+                          className="font-semibold text-[#1979CA] hover:underline cursor-pointer px-1"
+                          title="Apply slider brightness adjustment"
+                        >
+                          Apply
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="ribbon-filter-brighter-btn"
+                          onClick={() => {
+                            setBrightnessDelta(20);
+                            if (onApplyBrightness) {
+                              onApplyBrightness(20);
+                            } else {
+                              onApplyFilter?.('brightness', { brightnessDelta: 20 });
+                            }
+                          }}
+                          className="hover:text-[#1979CA] cursor-pointer px-0.5"
+                          title="Brighten current layer by 20%"
+                        >
+                          +20%
+                        </button>
+                      </div>
+                    </div>
+
                     <button
                       type="button"
                       data-testid="ribbon-filter-invert-btn"
-                      onClick={() => onApplyFilter('invert')}
+                      onClick={() => onApplyFilter?.('invert')}
                       className="flex flex-col items-center px-2 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
                       title="Invert colors of current drawing layer (Ctrl+I)"
                     >
@@ -1302,7 +1491,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* GROUP 3: TOOLS (Pencil, Fill, Text, Ruler / Eraser, Color picker, Magnifier) */}
-              <div className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0">
+              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
                 <div className="grid grid-cols-4 gap-1 pt-1">
                   {/* Pencil */}
                   <button
@@ -1439,9 +1628,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                 </span>
               </div>
 
-              {/* GROUP 4: BRUSHES */}
+              {/* GROUP 4: BRUSHES & STABILIZATION */}
               <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0 relative">
-                <div className="pt-0.5">
+                <div className="pt-0.5 flex items-center gap-1">
                   <button
                     type="button"
                     data-testid="ribbon-brushes-btn"
@@ -1449,7 +1638,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       if (!isBrushTool) onToolSelect('brush');
                       setActiveDropdown(activeDropdown === 'brushes' ? null : 'brushes');
                     }}
-                    className={`flex flex-col items-center px-2 py-0.5 border cursor-pointer min-w-[52px] ${
+                    className={`flex flex-col items-center px-1.5 py-0.5 border cursor-pointer min-w-[46px] ${
                       isBrushTool
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
@@ -1477,6 +1666,147 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       Brushes <span className="text-[8px]">▾</span>
                     </span>
                   </button>
+
+                  {/* Gradient Brush Mode Toggle (Primary -> Secondary multi-color stroke) */}
+                  <button
+                    type="button"
+                    data-testid="gradient-brush-btn"
+                    aria-pressed={isGradientBrush}
+                    onClick={handleToggleGradientBrush}
+                    className={`flex flex-col items-center justify-between px-1 py-0.5 border cursor-pointer min-w-[44px] h-[54px] ${
+                      isGradientBrush
+                        ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                        : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                    }`}
+                    title={`Gradient Brush mode (${currentColor.toUpperCase()} → ${secondaryColor.toUpperCase()} in one stroke)`}
+                  >
+                    <div className="flex flex-col items-center gap-1 pt-0.5">
+                      <svg className="w-6 h-5" viewBox="0 0 24 20" fill="none">
+                        <defs>
+                          <linearGradient id="ribbon_grad_brush_stroke" x1="2" y1="16" x2="22" y2="4" gradientUnits="userSpaceOnUse">
+                            <stop offset="0%" stopColor={gradientStops[0]} />
+                            <stop offset="50%" stopColor={gradientStops[1]} />
+                            <stop offset="100%" stopColor={gradientStops[2]} />
+                          </linearGradient>
+                        </defs>
+                        <path
+                          d="M3 15 C7 7, 15 13, 21 5"
+                          stroke="url(#ribbon_grad_brush_stroke)"
+                          strokeWidth="4.2"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span
+                        data-testid="gradient-brush-preview-bar"
+                        className="w-9 h-1.5 border border-[#7A8494] block"
+                        style={{ backgroundImage: gradientCss }}
+                      />
+                    </div>
+                    <span className="text-[10px] leading-[1.05] text-center">
+                      Gradient{' '}
+                      <br />
+                      Brush
+                    </span>
+                  </button>
+
+                  {/* Pointer Pressure Sensitivity Toggle (variable stroke width from stylus/device pressure) */}
+                  <button
+                    type="button"
+                    data-testid="ribbon-pressure-toggle-btn"
+                    aria-pressed={pressureSensitive}
+                    onClick={() => onPressureSensitiveChange?.(!pressureSensitive)}
+                    className={`flex flex-col items-center justify-between px-1 py-0.5 border cursor-pointer min-w-[44px] h-[54px] ${
+                      pressureSensitive
+                        ? 'bg-[#D8E8FA] border-[#7DA2CE]'
+                        : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
+                    }`}
+                    title={
+                      pressureSensitive
+                        ? 'Pressure Sensitivity ON: brush width varies with stylus/pointer pressure (click to lock uniform width)'
+                        : 'Pressure Sensitivity OFF: uniform stroke width (click to enable device pressure response)'
+                    }
+                  >
+                    <div className="flex items-center justify-center pt-0.5">
+                      <svg className="w-6 h-5" viewBox="0 0 24 20" fill="none">
+                        {/* Tapered variable-width pressure stroke */}
+                        <path
+                          d="M3 15.5 C7 14.5, 11 10.5, 19.5 6.5 C15 12, 10.5 16.5, 3 16.5 Z"
+                          fill={pressureSensitive ? '#1979CA' : '#8A94A6'}
+                        />
+                        {/* Stylus nib */}
+                        <path
+                          d="M17.5 3.5 L20.5 6.5 L15.5 11.5 L12.5 8.5 Z"
+                          fill="#E6ECF5"
+                          stroke="#4A5568"
+                          strokeWidth="1"
+                        />
+                        <path d="M12.5 8.5 L10.5 13 L15 11.5 Z" fill="#1E304B" />
+                      </svg>
+                    </div>
+                    <span className="text-[10px] leading-[1.05] text-center">
+                      Pressure
+                    </span>
+                  </button>
+
+                  {/* Brush Stroke Stabilization Intensity Slider */}
+                  <div
+                    data-testid="ribbon-stabilization-control"
+                    className="w-[86px] px-1.5 py-1 border border-[#DADBDC] bg-[#F8FAFC] flex flex-col justify-center gap-0.5"
+                    title="Brush Stroke Stabilization: averages cursor positions for smoother lines"
+                  >
+                    <div className="flex items-center justify-between gap-1 leading-none">
+                      <label
+                        htmlFor="ribbon-stabilization-slider"
+                        className="text-[10.5px] font-medium text-[#1E1E1E] select-none"
+                      >
+                        Stabilization
+                      </label>
+                      <span
+                        data-testid="ribbon-stabilization-value"
+                        className="text-[10px] font-semibold tabular-nums text-[#1979CA]"
+                      >
+                        {stabilization}%
+                      </span>
+                    </div>
+                    <input
+                      id="ribbon-stabilization-slider"
+                      data-testid="ribbon-stabilization-slider"
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={stabilization}
+                      onChange={(e) => onStabilizationChange?.(Number(e.target.value))}
+                      aria-label="Stabilization intensity"
+                      className="w-full h-3 accent-[#1979CA] cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between text-[9px] text-[#666666] leading-none">
+                      <button
+                        type="button"
+                        onClick={() => onStabilizationChange?.(0)}
+                        className="hover:text-[#1979CA] cursor-pointer"
+                        title="Raw unsmoothed cursor (0%)"
+                      >
+                        Off
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onStabilizationChange?.(50)}
+                        className="hover:text-[#1979CA] cursor-pointer"
+                        title="Balanced stabilization (50%)"
+                      >
+                        50%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onStabilizationChange?.(100)}
+                        className="hover:text-[#1979CA] cursor-pointer"
+                        title="Maximum cursor averaging (100%)"
+                      >
+                        Max
+                      </button>
+                    </div>
+                  </div>
 
                   {activeDropdown === 'brushes' && (
                     <div
@@ -1562,6 +1892,52 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           </button>
                         ))}
                       </div>
+                      <div className="border-t border-[#E0E1E2] p-1.5 bg-[#F8FAFC] flex flex-col gap-1">
+                        <button
+                          type="button"
+                          data-testid="dropdown-gradient-brush-btn"
+                          aria-pressed={isGradientBrush}
+                          onClick={() => {
+                            handleToggleGradientBrush();
+                            setActiveDropdown(null);
+                          }}
+                          className={`w-full px-2 py-1.5 border flex items-center justify-between gap-2 text-left cursor-pointer ${
+                            isGradientBrush
+                              ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                              : 'border-[#DADBDC] bg-white hover:bg-[#E5F1FB]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-5 h-3 border border-[#7A8494] shrink-0"
+                              style={{ backgroundImage: gradientCss }}
+                            />
+                            <span className="text-[#1E1E1E]">Gradient Brush Mode</span>
+                          </span>
+                          <span className="text-[10px] font-semibold text-[#1979CA]">
+                            {isGradientBrush ? 'ON' : 'OFF'}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="dropdown-pressure-toggle-btn"
+                          aria-pressed={pressureSensitive}
+                          onClick={() => {
+                            onPressureSensitiveChange?.(!pressureSensitive);
+                            setActiveDropdown(null);
+                          }}
+                          className={`w-full px-2 py-1.5 border flex items-center justify-between gap-2 text-left cursor-pointer ${
+                            pressureSensitive
+                              ? 'bg-[#D8E8FA] border-[#7DA2CE] font-semibold'
+                              : 'border-[#DADBDC] bg-white hover:bg-[#E5F1FB]'
+                          }`}
+                        >
+                          <span className="text-[#1E1E1E]">Pointer Pressure Sensitivity</span>
+                          <span className="text-[10px] font-semibold text-[#1979CA]">
+                            {pressureSensitive ? 'ON' : 'OFF'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1571,7 +1947,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* GROUP 5: SHAPES + OUTLINE & FILL */}
-              <div className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0">
+              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
                 <div className="flex items-start gap-1.5 pt-0.5">
                   {/* Framed 7x2 Shapes Gallery Box with Scroll Arrows */}
                   <div className="flex items-stretch border border-[#C6C7C8] bg-white h-[54px]">
@@ -1832,13 +2208,13 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* GROUP 6: SIZE */}
-              <div className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0 relative">
+              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0 relative">
                 <div className="pt-0.5">
                   <button
                     type="button"
                     data-testid="ribbon-size-btn"
                     onClick={() => setActiveDropdown(activeDropdown === 'size' ? null : 'size')}
-                    className="flex flex-col items-center px-2 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-1.5 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
                     title={`Stroke size: ${currentSize}px ([ / ])`}
                   >
                     <svg className="w-7 h-7" viewBox="0 0 28 28" fill="none">
@@ -1897,14 +2273,14 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* GROUP 7: COLORS (Color 1, Color 2, 10x3 Palette Grid, Edit colors) */}
-              <div className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0">
-                <div className="flex items-start gap-1.5 pt-0.5">
+              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
+                <div className="flex items-start gap-1 pt-0.5">
                   {/* Color 1 box */}
                   <button
                     type="button"
                     data-testid="color1-slot-btn"
                     onClick={() => setActiveColorSlot(1)}
-                    className={`flex flex-col items-center px-1.5 py-0.5 border cursor-pointer ${
+                    className={`flex flex-col items-center px-1 py-0.5 border cursor-pointer ${
                       activeColorSlot === 1
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB]'
@@ -1918,7 +2294,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       />
                     </span>
                     <span className="text-[10.5px] leading-[1.1] mt-0.5 text-center">
-                      Color<br />1
+                      Color{' '}
+                      <br />
+                      1
                     </span>
                   </button>
 
@@ -1927,7 +2305,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     type="button"
                     data-testid="color2-slot-btn"
                     onClick={() => setActiveColorSlot(2)}
-                    className={`flex flex-col items-center px-1.5 py-0.5 border cursor-pointer ${
+                    className={`flex flex-col items-center px-1 py-0.5 border cursor-pointer ${
                       activeColorSlot === 2
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB]'
@@ -1982,7 +2360,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     type="button"
                     data-testid="edit-colors-btn"
                     onClick={onEditColors}
-                    className="flex flex-col items-center px-1.5 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-1 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
                     title="Edit colors (HEX / RGB / Spectrum)"
                   >
                     <span
@@ -1993,7 +2371,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       }}
                     />
                     <span className="text-[10.5px] leading-[1.1] mt-1 text-center">
-                      Edit<br />colors
+                      Edit{' '}
+                      <br />
+                      colors
                     </span>
                   </button>
                 </div>
@@ -2003,18 +2383,20 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* GROUP 8: PAINT BOOKS (Pixora Stencil Gallery slot in Paint 3D position) */}
-              <div className="flex flex-col justify-between h-full px-2 shrink-0">
+              <div className="flex flex-col justify-between h-full px-1.5 shrink-0">
                 <div className="pt-0.5 flex items-center justify-center">
                   <button
                     type="button"
                     data-testid="ribbon-paint-books-btn"
                     onClick={onOpenTemplates}
-                    className="flex flex-col items-center px-2 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-1.5 py-0.5 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] cursor-pointer"
                     title="Open Pixora Paint Book Gallery & Tracing Templates"
                   >
                     <BookOpen className="w-6 h-6 text-[#1979CA] mt-0.5" />
                     <span className="text-[10.5px] leading-[1.1] mt-1 text-center">
-                      Paint<br />Books
+                      Paint{' '}
+                      <br />
+                      Books
                     </span>
                   </button>
                 </div>

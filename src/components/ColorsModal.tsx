@@ -1,6 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Pipette, Shuffle, Sun, Moon } from 'lucide-react';
-import { hexToRgb, rgbToHex, rgbToHsv, hsvToRgb } from '../utils/color';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Pipette, Shuffle, Sun, Moon, Clock, Palette } from 'lucide-react';
+import {
+  hexToRgb,
+  rgbToHex,
+  rgbToHsv,
+  hsvToRgb,
+  MAX_RECENT_COLORS,
+  POPULAR_COLOR_PALETTE,
+  ColorTarget,
+  recordRecentColor,
+  resolveTargetColor,
+} from '../utils/color';
 import {
   COLOR_SWATCHES,
   CLASSIC_PAINT_BOX,
@@ -17,7 +27,11 @@ interface ColorsModalProps {
   onClose: () => void;
   currentColor: string;
   onColorChange: (hex: string) => void;
+  secondaryColor?: string;
+  onSecondaryColorChange?: (hex: string) => void;
   onAddCustomColor?: (hex: string) => void;
+  recentColors?: string[];
+  onCommitRecentColor?: (hex: string) => void;
   themeMode?: 'bright' | 'dark';
   onToggleTheme?: () => void;
 }
@@ -27,32 +41,99 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
   onClose,
   currentColor,
   onColorChange,
+  secondaryColor,
+  onSecondaryColorChange,
   onAddCustomColor,
+  recentColors: recentColorsProp,
+  onCommitRecentColor,
   themeMode,
   onToggleTheme,
 }) => {
   const [activeTab, setActiveTab] = useState<'spectrum' | 'sliders' | 'palettes'>('spectrum');
-  const [rgb, setRgb] = useState<{ r: number; g: number; b: number }>(() => hexToRgb(currentColor));
+  const [activeTarget, setActiveTarget] = useState<ColorTarget>('primary');
+  const effectiveSecondaryColor = secondaryColor ?? '#FFFFFF';
+  const activeColor = resolveTargetColor(activeTarget, currentColor, effectiveSecondaryColor);
+
+  const [rgb, setRgb] = useState<{ r: number; g: number; b: number }>(() => hexToRgb(activeColor));
   const [hsv, setHsv] = useState<{ h: number; s: number; v: number }>(() => {
-    const initRgb = hexToRgb(currentColor);
+    const initRgb = hexToRgb(activeColor);
     return rgbToHsv(initRgb.r, initRgb.g, initRgb.b);
   });
-  const [hexInput, setHexInput] = useState<string>(currentColor);
-  const [previousColor] = useState<string>(currentColor);
+  const [hexInput, setHexInput] = useState<string>(activeColor);
+  const [previousColor, setPreviousColor] = useState<string>(activeColor);
+  const [internalRecentColors, setInternalRecentColors] = useState<string[]>([]);
 
   const spectrumRef = useRef<HTMLDivElement>(null);
   const isDraggingSpectrum = useRef<boolean>(false);
   const colorInputRef = useRef<HTMLInputElement>(null);
+  const latestHexRef = useRef<string>(activeColor.toUpperCase());
 
-  // Sync internal state when external currentColor changes
+  const effectiveRecentColors = recentColorsProp ?? internalRecentColors;
+
+  const commitTargetColor = useCallback(
+    (hex: string, targetOverride?: ColorTarget) => {
+      const target = targetOverride ?? activeTarget;
+      if (target === 'secondary' && onSecondaryColorChange) {
+        onSecondaryColorChange(hex);
+      } else {
+        onColorChange(hex);
+      }
+    },
+    [activeTarget, onColorChange, onSecondaryColorChange]
+  );
+
+  const commitRecentColor = useCallback(
+    (hex: string) => {
+      if (onCommitRecentColor) {
+        onCommitRecentColor(hex);
+      } else {
+        setInternalRecentColors((prev) => recordRecentColor(prev, hex));
+      }
+    },
+    [onCommitRecentColor]
+  );
+
+  // Snapshot previousColor and reset target to primary whenever the modal opens
   useEffect(() => {
-    const newRgb = hexToRgb(currentColor);
+    if (isOpen) {
+      setActiveTarget('primary');
+      setPreviousColor(currentColor);
+    }
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync internal state when external activeColor or target changes
+  useEffect(() => {
+    const newRgb = hexToRgb(activeColor);
     setRgb(newRgb);
     setHsv(rgbToHsv(newRgb.r, newRgb.g, newRgb.b));
-    setHexInput(currentColor.toUpperCase());
-  }, [currentColor]);
+    const upper = activeColor.toUpperCase();
+    setHexInput(upper);
+    latestHexRef.current = upper;
+  }, [activeColor]);
+
+  // Complete spectrum drag reliably even if pointer releases outside spectrum box
+  useEffect(() => {
+    const handleGlobalPointerUp = () => {
+      if (isDraggingSpectrum.current) {
+        isDraggingSpectrum.current = false;
+        commitRecentColor(latestHexRef.current);
+      }
+    };
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    window.addEventListener('pointercancel', handleGlobalPointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+      window.removeEventListener('pointercancel', handleGlobalPointerUp);
+    };
+  }, [commitRecentColor]);
 
   if (!isOpen) return null;
+
+  const handleSwitchTarget = (nextTarget: ColorTarget) => {
+    setActiveTarget(nextTarget);
+    const nextColor = resolveTargetColor(nextTarget, currentColor, effectiveSecondaryColor);
+    setPreviousColor(nextColor);
+  };
 
   // Update from HSV
   const updateFromHsv = (newHsv: { h: number; s: number; v: number }) => {
@@ -61,7 +142,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
     setRgb(newRgb);
     const newHex = rgbToHex(newRgb.r, newRgb.g, newRgb.b);
     setHexInput(newHex);
-    onColorChange(newHex);
+    latestHexRef.current = newHex;
+    commitTargetColor(newHex);
   };
 
   // Update from RGB
@@ -70,7 +152,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
     setHsv(rgbToHsv(newRgb.r, newRgb.g, newRgb.b));
     const newHex = rgbToHex(newRgb.r, newRgb.g, newRgb.b);
     setHexInput(newHex);
-    onColorChange(newHex);
+    latestHexRef.current = newHex;
+    commitTargetColor(newHex);
   };
 
   // Update from Hex String
@@ -81,7 +164,9 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
       const newRgb = hexToRgb(val);
       setRgb(newRgb);
       setHsv(rgbToHsv(newRgb.r, newRgb.g, newRgb.b));
-      onColorChange(val);
+      latestHexRef.current = val;
+      commitTargetColor(val);
+      commitRecentColor(val);
     }
   };
 
@@ -105,15 +190,24 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
   };
 
   const handleSpectrumPointerUp = () => {
-    isDraggingSpectrum.current = false;
+    if (isDraggingSpectrum.current) {
+      isDraggingSpectrum.current = false;
+      commitRecentColor(latestHexRef.current);
+    }
   };
 
-  const handlePickPreset = (hex: string, autoClose = false) => {
-    onColorChange(hex);
-    const newRgb = hexToRgb(hex);
-    setRgb(newRgb);
-    setHsv(rgbToHsv(newRgb.r, newRgb.g, newRgb.b));
-    setHexInput(hex.toUpperCase());
+  const handlePickPreset = (hex: string, autoClose = false, targetOverride?: ColorTarget) => {
+    const upper = hex.toUpperCase();
+    const resolvedTarget = targetOverride ?? activeTarget;
+    commitTargetColor(upper, resolvedTarget);
+    commitRecentColor(upper);
+    if (resolvedTarget === activeTarget) {
+      latestHexRef.current = upper;
+      const newRgb = hexToRgb(upper);
+      setRgb(newRgb);
+      setHsv(rgbToHsv(newRgb.r, newRgb.g, newRgb.b));
+      setHexInput(upper);
+    }
     if (autoClose) {
       onClose();
     }
@@ -128,7 +222,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
         const result = await eyeDropper.open();
         if (result?.sRGBHex) {
           const pickedHex = result.sRGBHex.toUpperCase();
-          onColorChange(pickedHex);
+          commitTargetColor(pickedHex);
+          commitRecentColor(pickedHex);
         }
       } catch {
         colorInputRef.current?.click();
@@ -164,7 +259,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
         <input
           ref={colorInputRef}
           type="color"
-          value={currentColor.startsWith('#') && currentColor.length === 7 ? currentColor : '#164BCE'}
+          value={activeColor.startsWith('#') && activeColor.length === 7 ? activeColor : '#164BCE'}
           onChange={(e) => handlePickPreset(e.target.value)}
           className="hidden"
         />
@@ -185,8 +280,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
               />
               <div
                 className="w-1/2 h-full"
-                style={{ backgroundColor: currentColor }}
-                title="Current active color"
+                style={{ backgroundColor: activeColor }}
+                title="Current targeted color"
               />
             </div>
           </div>
@@ -218,8 +313,11 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             )}
 
             <button
+              type="button"
               onClick={() => {
-                onAddCustomColor?.(currentColor.toUpperCase());
+                const upper = activeColor.toUpperCase();
+                commitRecentColor(upper);
+                onAddCustomColor?.(upper);
                 onClose();
               }}
               className="px-3.5 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-xs text-white shadow-sm active:scale-95 transition-all cursor-pointer"
@@ -230,7 +328,62 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-3.5 sm:p-4 flex flex-col items-center gap-3 text-xs overflow-y-auto max-h-[70vh]">
+        <div className="p-3.5 sm:p-4 flex flex-col items-center gap-2.5 text-xs overflow-y-auto max-h-[72vh]">
+          {/* Primary / Secondary Target Switcher */}
+          <div
+            data-testid="colors-modal-target-bar"
+            className="w-full grid grid-cols-2 gap-1.5 rounded-xl bg-slate-950/80 border border-slate-800 p-1"
+          >
+            <button
+              type="button"
+              data-testid="colors-modal-target-primary"
+              aria-pressed={activeTarget === 'primary'}
+              onClick={() => handleSwitchTarget('primary')}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-all cursor-pointer ${
+                activeTarget === 'primary'
+                  ? 'bg-slate-800 text-white ring-1 ring-blue-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <span
+                data-testid="colors-modal-primary-swatch"
+                className="w-4 h-4 rounded-md border border-slate-500 shrink-0"
+                style={{ backgroundColor: currentColor }}
+              />
+              <span className="min-w-0 flex-1 flex items-center justify-between gap-1">
+                <span className="text-[11px] font-bold">Primary</span>
+                <span className="font-mono text-[10px] text-slate-400">
+                  {currentColor.toUpperCase()}
+                </span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="colors-modal-target-secondary"
+              aria-pressed={activeTarget === 'secondary'}
+              onClick={() => handleSwitchTarget('secondary')}
+              disabled={!onSecondaryColorChange}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-all cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
+                activeTarget === 'secondary'
+                  ? 'bg-slate-800 text-white ring-1 ring-blue-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <span
+                data-testid="colors-modal-secondary-swatch"
+                className="w-4 h-4 rounded-md border border-slate-500 shrink-0"
+                style={{ backgroundColor: effectiveSecondaryColor }}
+              />
+              <span className="min-w-0 flex-1 flex items-center justify-between gap-1">
+                <span className="text-[11px] font-bold">Secondary</span>
+                <span className="font-mono text-[10px] text-slate-400">
+                  {effectiveSecondaryColor.toUpperCase()}
+                </span>
+              </span>
+            </button>
+          </div>
+
           {activeTab === 'spectrum' && (
             <>
               {/* High-Precision 2D HSV Saturation-Value Canvas Box */}
@@ -240,7 +393,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 onPointerMove={handleSpectrumPointerMove}
                 onPointerUp={handleSpectrumPointerUp}
                 onPointerCancel={handleSpectrumPointerUp}
-                className="relative w-full h-44 sm:h-48 rounded-xl cursor-crosshair select-none overflow-hidden shadow-inner border border-slate-700 touch-none"
+                className="relative w-full h-36 sm:h-40 rounded-xl cursor-crosshair select-none overflow-hidden shadow-inner border border-slate-700 touch-none shrink-0"
                 style={{
                   backgroundColor: `hsl(${hsv.h}, 100%, 50%)`,
                   backgroundImage: `
@@ -255,7 +408,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   style={{
                     left: `${hsv.s}%`,
                     top: `${100 - hsv.v}%`,
-                    backgroundColor: currentColor,
+                    backgroundColor: activeColor,
                   }}
                 />
               </div>
@@ -272,6 +425,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="360"
                   value={hsv.h}
                   onChange={(e) => updateFromHsv({ ...hsv, h: parseInt(e.target.value, 10) })}
+                  onPointerUp={() => commitRecentColor(latestHexRef.current)}
+                  onKeyUp={() => commitRecentColor(latestHexRef.current)}
                   className="w-full h-3 rounded-lg cursor-pointer accent-white"
                   style={{
                     background:
@@ -296,6 +451,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="255"
                   value={rgb.r}
                   onChange={(e) => updateFromRgb({ ...rgb, r: parseInt(e.target.value, 10) })}
+                  onPointerUp={() => commitRecentColor(latestHexRef.current)}
+                  onKeyUp={() => commitRecentColor(latestHexRef.current)}
                   className="w-full h-2.5 rounded-lg cursor-pointer accent-red-500 bg-slate-800"
                 />
               </div>
@@ -312,6 +469,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="255"
                   value={rgb.g}
                   onChange={(e) => updateFromRgb({ ...rgb, g: parseInt(e.target.value, 10) })}
+                  onPointerUp={() => commitRecentColor(latestHexRef.current)}
+                  onKeyUp={() => commitRecentColor(latestHexRef.current)}
                   className="w-full h-2.5 rounded-lg cursor-pointer accent-emerald-500 bg-slate-800"
                 />
               </div>
@@ -328,6 +487,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                   max="255"
                   value={rgb.b}
                   onChange={(e) => updateFromRgb({ ...rgb, b: parseInt(e.target.value, 10) })}
+                  onPointerUp={() => commitRecentColor(latestHexRef.current)}
+                  onKeyUp={() => commitRecentColor(latestHexRef.current)}
                   className="w-full h-2.5 rounded-lg cursor-pointer accent-blue-500 bg-slate-800"
                 />
               </div>
@@ -354,7 +515,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                         key={item.name + item.hex}
                         onClick={() => handlePickPreset(item.hex, true)}
                         className={`h-6.5 sm:h-6 rounded-md border transition-transform active:scale-90 cursor-pointer ${
-                          currentColor.toLowerCase() === item.hex.toLowerCase()
+                          activeColor.toLowerCase() === item.hex.toLowerCase()
                             ? 'border-white scale-110 shadow-md ring-2 ring-blue-500 z-10'
                             : 'border-slate-700/80 hover:scale-105 hover:border-slate-400'
                         }`}
@@ -407,6 +568,98 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             </button>
           </div>
 
+          {/* Color Palette Section (12 popular color presets) */}
+          <div
+            data-testid="color-palette-section"
+            className="w-full rounded-xl bg-slate-950/70 border border-slate-800 px-2.5 py-2 flex flex-col gap-1.5"
+          >
+            <div className="flex items-center justify-between text-[10.5px] font-bold text-slate-300">
+              <span className="flex items-center gap-1.5 uppercase tracking-wider">
+                <Palette className="w-3 h-3 text-blue-400" />
+                <span>Color Palette</span>
+              </span>
+              <span className="text-[10px] font-medium text-slate-400">
+                Updating {activeTarget === 'secondary' ? 'Secondary' : 'Primary'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-6 gap-1.5">
+              {POPULAR_COLOR_PALETTE.map((preset, idx) => {
+                const isActive = activeColor.toUpperCase() === preset.hex.toUpperCase();
+                return (
+                  <button
+                    key={preset.hex}
+                    type="button"
+                    data-testid={`color-palette-preset-${idx}`}
+                    onClick={() => handlePickPreset(preset.hex, false)}
+                    onContextMenu={(e) => {
+                      if (!onSecondaryColorChange) return;
+                      e.preventDefault();
+                      handlePickPreset(preset.hex, false, 'secondary');
+                    }}
+                    className={`h-7 w-full rounded-lg border transition-transform active:scale-90 cursor-pointer ${
+                      isActive
+                        ? 'border-white scale-105 ring-2 ring-blue-400 z-10'
+                        : 'border-slate-700 hover:scale-105 hover:border-slate-400'
+                    }`}
+                    style={{ backgroundColor: preset.hex }}
+                    title={`${preset.name} (${preset.hex}) — Click to set ${
+                      activeTarget === 'secondary' ? 'Secondary' : 'Primary'
+                    }${onSecondaryColorChange ? ' • Right-click for Secondary' : ''}`}
+                    aria-label={`${preset.name} (${preset.hex})`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Recent Colors History (Last 10 unique colors selected) */}
+          <div
+            data-testid="recent-colors-section"
+            className="w-full rounded-xl bg-slate-950/70 border border-slate-800 px-2.5 py-2 flex flex-col gap-1.5"
+          >
+            <div className="flex items-center justify-between text-[10.5px] font-bold text-slate-300">
+              <span className="flex items-center gap-1.5 uppercase tracking-wider">
+                <Clock className="w-3 h-3 text-blue-400" />
+                <span>Recent Colors</span>
+              </span>
+              <span
+                data-testid="recent-colors-count"
+                className="font-mono text-[10px] text-slate-400"
+              >
+                {effectiveRecentColors.length}/{MAX_RECENT_COLORS}
+              </span>
+            </div>
+
+            {effectiveRecentColors.length === 0 ? (
+              <p className="text-[11px] text-slate-400 py-0.5">
+                No recent colors yet — select or apply colors to build your history.
+              </p>
+            ) : (
+              <div className="grid grid-cols-10 gap-1">
+                {effectiveRecentColors.map((hex, idx) => {
+                  const isActive = activeColor.toUpperCase() === hex.toUpperCase();
+                  return (
+                    <button
+                      key={hex}
+                      type="button"
+                      data-testid={`recent-color-swatch-${idx}`}
+                      onClick={() => handlePickPreset(hex, false)}
+                      className={`h-6.5 w-full rounded-md border transition-transform active:scale-90 cursor-pointer ${
+                        isActive
+                          ? 'border-white scale-105 ring-2 ring-blue-400 z-10'
+                          : 'border-slate-700 hover:scale-105 hover:border-slate-400'
+                      }`}
+                      style={{ backgroundColor: hex }}
+                      title={`Reuse ${hex}`}
+                      aria-label={`Reuse recent color ${hex}`}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Swatches Quick Bar - Tightly Packed */}
           <div className="w-full flex items-center justify-between gap-1 overflow-x-auto pb-0.5 no-scrollbar">
             {COLOR_SWATCHES.slice(0, 10).map((sw) => (
@@ -414,7 +667,7 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 key={sw.hex}
                 onClick={() => handlePickPreset(sw.hex, true)}
                 className={`w-6 h-6 rounded-md border shrink-0 transition-transform active:scale-90 cursor-pointer ${
-                  currentColor.toLowerCase() === sw.hex.toLowerCase()
+                  activeColor.toLowerCase() === sw.hex.toLowerCase()
                     ? 'border-white scale-110 ring-2 ring-blue-500'
                     : 'border-slate-700'
                 }`}

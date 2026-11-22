@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Layers } from 'lucide-react';
 import { PaintRibbon } from './components/PaintRibbon';
 import { PaintStatusBar } from './components/PaintStatusBar';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -33,12 +34,15 @@ import {
   renderStrokeToContext,
   generateArtworkFilename,
   exportStrokesToSvgString,
+  getMirrorModeStatusMessage,
 } from './utils/drawing';
 import {
   DEFAULT_LAYER_ID,
   addTransparentLayer,
   createInitialLayers,
   deleteLayer,
+  getDefaultLayersSidebarOpen,
+  getLayersToggleAccessibleLabel,
   getVisibleOrderedStrokes,
   moveLayer,
   renameLayer,
@@ -49,6 +53,7 @@ import {
 } from './utils/layers';
 import { TEMPLATES } from './data/templates';
 import { resolveKeyboardShortcut } from './utils/shortcuts';
+import { recordRecentColor } from './utils/color';
 
 export default function App() {
   // Navigation / View State: Welcome Page as front page
@@ -58,7 +63,6 @@ export default function App() {
   const [ribbonTab, setRibbonTab] = useState<'file' | 'home' | 'view'>('home');
   const [isRibbonOpen, setIsRibbonOpen] = useState<boolean>(true);
   const [isRibbonPinned, setIsRibbonPinned] = useState<boolean>(true);
-  const [isWindowMinimized, setIsWindowMinimized] = useState<boolean>(false);
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none');
   const [tool, setTool] = useState<ToolType>('brush');
   const [lastDrawingTool, setLastDrawingTool] = useState<ToolType>('brush');
@@ -70,7 +74,11 @@ export default function App() {
   const [color, setColor] = useState<string>('#000000');
   const [secondaryColor, setSecondaryColor] = useState<string>('#FFFFFF');
   const [customColors, setCustomColors] = useState<string[]>([]);
+  const [recentColors, setRecentColors] = useState<string[]>([]);
   const [size, setSize] = useState<number>(5);
+  const [stabilization, setStabilization] = useState<number>(45);
+  const [pressureSensitive, setPressureSensitive] = useState<boolean>(true);
+  const [isGradientBrush, setIsGradientBrush] = useState<boolean>(false);
   const [opacity] = useState<number>(1.0);
 
   // Canvas & Viewport State matching reference proportion (819 × 460px at 100%)
@@ -91,10 +99,22 @@ export default function App() {
   const [hasSelection, setHasSelection] = useState<boolean>(false);
   const [canPaste, setCanPaste] = useState<boolean>(false);
 
-  // Multi-layer management state
+  // Multi-layer management state (defaults hidden on phones <768px so canvas gets full width)
   const [layers, setLayers] = useState<CanvasLayer[]>(() => createInitialLayers());
   const [activeLayerId, setActiveLayerId] = useState<string>(DEFAULT_LAYER_ID);
-  const [showLayersSidebar, setShowLayersSidebar] = useState<boolean>(true);
+  const [showLayersSidebar, setShowLayersSidebar] = useState<boolean>(() =>
+    getDefaultLayersSidebarOpen(typeof window !== 'undefined' ? window.innerWidth : 1024)
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia('(max-width: 767px)');
+    const handleViewportCross = (event: MediaQueryListEvent) => {
+      setShowLayersSidebar(!event.matches);
+    };
+    mql.addEventListener('change', handleViewportCross);
+    return () => mql.removeEventListener('change', handleViewportCross);
+  }, []);
 
   // History
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -132,6 +152,26 @@ export default function App() {
       setToastMessage(null);
     }, 2600);
   }, []);
+
+  const handleRecordRecentColor = useCallback((hex: string) => {
+    setRecentColors((prev) => recordRecentColor(prev, hex));
+  }, []);
+
+  const handleSelectPrimaryColor = useCallback(
+    (hex: string) => {
+      setColor(hex);
+      handleRecordRecentColor(hex);
+    },
+    [handleRecordRecentColor]
+  );
+
+  const handleSelectSecondaryColor = useCallback(
+    (hex: string) => {
+      setSecondaryColor(hex);
+      handleRecordRecentColor(hex);
+    },
+    [handleRecordRecentColor]
+  );
 
   // Safe link and URL parameter router
   useEffect(() => {
@@ -274,21 +314,11 @@ export default function App() {
       setLastClosedTemplate(activeTemplate);
       setActiveTemplate(null);
     }
-    setIsWindowMinimized(false);
     setZoomLevel(1.0);
     setResetViewSignal((n) => n + 1);
     setIsAutoFullScreenCanvas(true);
     updateHistoryFlags();
     showToast('Page cleared');
-  };
-
-  const handleMinimizeWindow = () => {
-    try {
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
-      }
-    } catch {}
-    setIsWindowMinimized(true);
   };
 
   const handleToolSelect = (nextTool: ToolType) => {
@@ -426,7 +456,7 @@ export default function App() {
   // Desktop Windows Paint keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (currentView !== 'studio' || isWindowMinimized) {
+      if (currentView !== 'studio') {
         return;
       }
 
@@ -690,7 +720,7 @@ export default function App() {
     >
       {/* Subtle Non-Obstructive Feedback Toast */}
       {toastMessage && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-3 py-1 bg-[#F5F6F7] border border-[#9AA4B2] shadow-md flex items-center gap-2 text-[11px] font-medium text-[#1E1E1E]">
+        <div className="fixed bottom-9 left-3 z-50 pointer-events-none px-3 py-1 bg-[#F5F6F7] border border-[#9AA4B2] shadow-md flex items-center gap-2 text-[11px] font-medium text-[#1E1E1E]">
           {toastMessage.hex && (
             <span
               className="w-3 h-3 border border-[#666] inline-block"
@@ -705,131 +735,9 @@ export default function App() {
         <WelcomeScreen onStartCreating={handleStartFreshCanvas} />
       ) : (
         <>
-          {isWindowMinimized && (
-            <div
-              data-testid="minimized-desktop-view"
-              className="flex-1 min-h-0 flex flex-col justify-between bg-[#C9D2E3] text-[#1E1E1E] select-none"
-            >
-              {/* Workspace area with compact docked minimized Paint window bar */}
-              <div className="flex-1 flex flex-col justify-end p-3">
-                <div
-                  data-testid="minimized-window-bar"
-                  className="bg-white border border-[#8E9AA8] shadow-md h-[34px] w-full max-w-[360px] flex items-center justify-between pl-2"
-                >
-                  <button
-                    type="button"
-                    data-testid="desktop-restore-btn"
-                    onClick={() => setIsWindowMinimized(false)}
-                    className="flex items-center gap-2 min-w-0 flex-1 h-full text-left cursor-pointer hover:bg-[#F2F6FC] px-1"
-                    title="Click to restore Pixora window"
-                  >
-                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M12 3C6.5 3 2 7 2 11.8C2 15.2 4.8 17.5 8 17.5C9.4 17.5 10.2 18.2 10.2 19.3C10.2 20.5 11.1 21 12.5 21C18 21 22 17 22 12C22 7 17.5 3 12 3Z"
-                        fill="#F6D57E"
-                        stroke="#8B6F29"
-                        strokeWidth="1.4"
-                      />
-                      <circle cx="7.5" cy="9.5" r="1.6" fill="#ED1C24" />
-                      <circle cx="12" cy="7.2" r="1.6" fill="#22B14C" />
-                      <circle cx="16.5" cy="9.5" r="1.6" fill="#00A2E8" />
-                      <circle cx="16.5" cy="14" r="1.6" fill="#FFF200" />
-                    </svg>
-                    <span className="text-[12px] font-medium truncate text-[#1E1E1E]">
-                      {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
-                    </span>
-                    <span className="text-[10px] text-[#666666] shrink-0">
-                      ({strokes.length})
-                    </span>
-                  </button>
-
-                  <div className="flex items-center h-full shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setIsWindowMinimized(false)}
-                      className="w-[34px] h-full flex items-center justify-center bg-[#E5F1FB] border-l border-[#DADBDC] hover:bg-[#CCE4F7] text-[#1E1E1E] cursor-pointer"
-                      title="Restore window"
-                      aria-label="Restore"
-                    >
-                      <span className="w-2.5 h-[1px] bg-[#1E1E1E] block" />
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="minimized-maximize-btn"
-                      onClick={() => {
-                        setIsWindowMinimized(false);
-                      }}
-                      className="w-[34px] h-full flex items-center justify-center hover:bg-[#E5E5E5] text-[#1E1E1E] cursor-pointer"
-                      title="Maximize / Restore"
-                      aria-label="Maximize"
-                    >
-                      <span className="w-2.5 h-2.5 border border-[#1E1E1E] block" />
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="minimized-clear-btn"
-                      onClick={handleClearPage}
-                      className="w-[34px] h-full flex items-center justify-center hover:bg-[#E81123] hover:text-white text-[#1E1E1E] cursor-pointer text-[12px]"
-                      title="Clear page"
-                      aria-label="Clear page"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Traditional Windows Taskbar */}
-              <div
-                data-testid="windows-taskbar"
-                className="h-[38px] bg-[#1F242D] border-t border-[#343C4A] px-2 flex items-center justify-between text-[12px]"
-              >
-                <div className="flex items-center gap-1 h-full">
-                  <div className="w-9 h-full flex items-center justify-center text-[#93C5FD]">
-                    <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                      <rect x="1" y="1" width="6" height="6" />
-                      <rect x="9" y="1" width="6" height="6" />
-                      <rect x="1" y="9" width="6" height="6" />
-                      <rect x="9" y="9" width="6" height="6" />
-                    </svg>
-                  </div>
-                  <button
-                    type="button"
-                    data-testid="taskbar-restore-btn"
-                    onClick={() => setIsWindowMinimized(false)}
-                    className="h-full px-3 bg-[#2E3644] hover:bg-[#3A4556] border-b-2 border-[#60A5FA] flex items-center gap-2 text-white cursor-pointer"
-                    title="Click to restore Pixora window"
-                  >
-                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M12 3C6.5 3 2 7 2 11.8C2 15.2 4.8 17.5 8 17.5C9.4 17.5 10.2 18.2 10.2 19.3C10.2 20.5 11.1 21 12.5 21C18 21 22 17 22 12C22 7 17.5 3 12 3Z"
-                        fill="#F6D57E"
-                        stroke="#8B6F29"
-                        strokeWidth="1.4"
-                      />
-                      <circle cx="7.5" cy="9.5" r="1.6" fill="#ED1C24" />
-                      <circle cx="12" cy="7.2" r="1.6" fill="#22B14C" />
-                      <circle cx="16.5" cy="9.5" r="1.6" fill="#00A2E8" />
-                    </svg>
-                    <span className="truncate max-w-[200px]">
-                      {activeTemplate ? `${activeTemplate.name} - Pixora` : 'Untitled - Pixora'}
-                    </span>
-                  </button>
-                </div>
-                <div className="text-[11px] text-[#CBD5E1] px-2">
-                  Minimized — click to restore
-                </div>
-              </div>
-            </div>
-          )}
-
           <div
             data-testid="paint-studio-window"
-            className={
-              isWindowMinimized
-                ? 'hidden'
-                : 'flex-1 min-h-0 flex flex-col overflow-hidden'
-            }
+            className="flex-1 min-h-0 flex flex-col overflow-hidden"
           >
             {/* Traditional Windows Paint Title Bar, Tabs & Ribbon */}
             <PaintRibbon
@@ -844,13 +752,33 @@ export default function App() {
               fillStyle={fillStyle}
               onFillStyleChange={setFillStyle}
               currentColor={color}
-              onColorChange={setColor}
+              onColorChange={handleSelectPrimaryColor}
               secondaryColor={secondaryColor}
-              onSecondaryColorChange={setSecondaryColor}
+              onSecondaryColorChange={handleSelectSecondaryColor}
               customColors={customColors}
               onEditColors={() => setIsColorsModalOpen(true)}
               currentSize={size}
               onSizeChange={setSize}
+              stabilization={stabilization}
+              onStabilizationChange={setStabilization}
+              pressureSensitive={pressureSensitive}
+              onPressureSensitiveChange={(enabled) => {
+                setPressureSensitive(enabled);
+                showToast(
+                  enabled
+                    ? 'Pressure sensitivity enabled (variable stroke width)'
+                    : 'Pressure sensitivity disabled (uniform stroke width)'
+                );
+              }}
+              isGradientBrush={isGradientBrush}
+              onGradientBrushChange={(enabled) => {
+                setIsGradientBrush(enabled);
+                showToast(
+                  enabled
+                    ? 'Gradient Brush mode enabled (Color 1 → Color 2)'
+                    : 'Gradient Brush mode disabled'
+                );
+              }}
               canUndo={canUndo}
               canRedo={canRedo}
               onUndo={handleUndo}
@@ -867,7 +795,6 @@ export default function App() {
               onSave={() => setIsSaveModalOpen(true)}
               onExportFormat={handleExportFormat}
               onPrint={() => window.print()}
-              onMinimizeWindow={handleMinimizeWindow}
               onClearPage={handleClearPage}
               onExitStudio={() => setCurrentView('welcome')}
             onCut={() => canvasStudioRef.current?.cutSelection()}
@@ -881,6 +808,8 @@ export default function App() {
             onDeleteSelection={() => canvasStudioRef.current?.deleteSelection()}
             onOpenResize={() => setIsResizeModalOpen(true)}
             onRotateCanvas={(action) => canvasStudioRef.current?.rotateOrFlip(action)}
+            onFlipHorizontal={() => canvasStudioRef.current?.flipHorizontal()}
+            onFlipVertical={() => canvasStudioRef.current?.flipVertical()}
             zoomLevel={zoomLevel}
             onZoomIn={handleZoomIn}
             onZoomOut={handleZoomOut}
@@ -894,6 +823,7 @@ export default function App() {
             onToggleStatusBar={() => setShowStatusBar((prev) => !prev)}
             showLayersSidebar={showLayersSidebar}
             onToggleLayersSidebar={() => setShowLayersSidebar((prev) => !prev)}
+            layersCount={layers.length}
             onToggleFullScreen={handleToggleFullScreen}
             activeTemplate={activeTemplate}
             lastClosedTemplate={lastClosedTemplate}
@@ -916,8 +846,16 @@ export default function App() {
               });
             }}
             mirrorMode={mirrorMode}
-            onMirrorModeChange={setMirrorMode}
-            onApplyFilter={(filter) => canvasStudioRef.current?.applyFilter(filter)}
+            onMirrorModeChange={(mode) => {
+              setMirrorMode(mode);
+              showToast(getMirrorModeStatusMessage(mode));
+            }}
+            onMirrorHorizontal={() => canvasStudioRef.current?.toggleMirrorHorizontal()}
+            onMirrorVertical={() => canvasStudioRef.current?.toggleMirrorVertical()}
+            onApplyFilter={(filter, options) => canvasStudioRef.current?.applyFilter(filter, options)}
+            onApplyGrayscale={() => canvasStudioRef.current?.applyGrayscaleFilter()}
+            onApplySepia={() => canvasStudioRef.current?.applySepiaFilter()}
+            onApplyBrightness={(delta) => canvasStudioRef.current?.applyBrightnessFilter(delta)}
           />
 
           {/* Main Pale Blue-Grey Workspace & Layers Sidebar */}
@@ -932,13 +870,16 @@ export default function App() {
                 color={color}
                 secondaryColor={secondaryColor}
                 size={size}
+                stabilization={stabilization}
+                pressureSensitive={pressureSensitive}
+                isGradientBrush={isGradientBrush}
                 opacity={opacity}
                 strokes={strokes}
                 onStrokesChange={handleStrokesChange}
                 layers={layers}
                 activeLayerId={activeLayerId}
-                onColorChange={setColor}
-                onSecondaryColorChange={setSecondaryColor}
+                onColorChange={handleSelectPrimaryColor}
+                onSecondaryColorChange={handleSelectSecondaryColor}
                 onPickedColorComplete={() => setTool(lastDrawingTool)}
                 activeTemplate={activeTemplate}
                 lastClosedTemplate={lastClosedTemplate}
@@ -969,22 +910,47 @@ export default function App() {
               />
             </div>
 
-            {showLayersSidebar && (
-              <LayersSidebar
-                layers={layers}
-                activeLayerId={activeLayerId}
-                strokes={strokes}
-                canvasDimensions={canvasDimensions}
-                onSelectLayer={setActiveLayerId}
-                onAddLayer={handleAddLayer}
-                onToggleVisibility={handleToggleLayerVisibility}
-                onMoveLayer={handleMoveLayer}
-                onReorderLayer={handleReorderLayer}
-                onDeleteLayer={handleDeleteLayer}
-                onRenameLayer={handleRenameLayer}
-                onLayerOpacityChange={handleLayerOpacityChange}
-                onCloseSidebar={() => setShowLayersSidebar(false)}
-              />
+            {showLayersSidebar ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="layers-mobile-backdrop"
+                  aria-label="Hide Layers panel"
+                  onClick={() => setShowLayersSidebar(false)}
+                  className="md:hidden absolute inset-0 bg-slate-900/25 z-30 cursor-default"
+                />
+                <LayersSidebar
+                  layers={layers}
+                  activeLayerId={activeLayerId}
+                  strokes={strokes}
+                  canvasDimensions={canvasDimensions}
+                  onSelectLayer={setActiveLayerId}
+                  onAddLayer={handleAddLayer}
+                  onToggleVisibility={handleToggleLayerVisibility}
+                  onMoveLayer={handleMoveLayer}
+                  onReorderLayer={handleReorderLayer}
+                  onDeleteLayer={handleDeleteLayer}
+                  onRenameLayer={handleRenameLayer}
+                  onLayerOpacityChange={handleLayerOpacityChange}
+                  onCloseSidebar={() => setShowLayersSidebar(false)}
+                />
+              </>
+            ) : (
+              <button
+                type="button"
+                data-testid="reveal-layers-btn"
+                aria-expanded={false}
+                aria-label={getLayersToggleAccessibleLabel(false, layers.length)}
+                onClick={() => setShowLayersSidebar(true)}
+                className="absolute top-2 right-2 z-20 h-7 px-2.5 bg-[#F5F6F7]/95 hover:bg-[#E5F1FB] border border-[#9AA4B2] hover:border-[#7DA2CE] shadow-sm flex items-center gap-1.5 text-[11px] font-medium text-[#1E1E1E] cursor-pointer"
+                title="Reveal Layers panel"
+              >
+                <Layers className="w-3.5 h-3.5 text-[#1979CA]" />
+                <span>Layers</span>
+                <span className="px-1 py-0.2 text-[10px] bg-white border border-[#DADBDC] text-[#555555] leading-none tabular-nums">
+                  {layers.length}
+                </span>
+              </button>
             )}
           </main>
 
@@ -1022,6 +988,10 @@ export default function App() {
             onClose={() => setIsColorsModalOpen(false)}
             currentColor={color}
             onColorChange={setColor}
+            secondaryColor={secondaryColor}
+            onSecondaryColorChange={setSecondaryColor}
+            recentColors={recentColors}
+            onCommitRecentColor={handleRecordRecentColor}
             onAddCustomColor={(hex) => {
               setCustomColors((prev) =>
                 prev.includes(hex) ? prev : [hex, ...prev].slice(0, 10)
@@ -1063,7 +1033,7 @@ export default function App() {
             isOpen={isSparkModalOpen}
             onClose={() => setIsSparkModalOpen(false)}
             onSelectColor={(hex) => {
-              setColor(hex);
+              handleSelectPrimaryColor(hex);
               showToast('Color applied to brush', hex);
             }}
           />
