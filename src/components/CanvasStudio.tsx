@@ -31,6 +31,7 @@ import {
   ShapeFillStyle,
   ShapeOutlineStyle,
   ShapeType,
+  StampShape,
   Stroke,
   ToolType,
 } from '../types';
@@ -52,6 +53,7 @@ import {
   renderStrokeToContext,
   preloadStrokeRasterImage,
 } from '../utils/drawing';
+import { getBlurBrushStrokeWidth } from '../utils/blur';
 import {
   createInitialLayers,
   groupStrokesByLayer,
@@ -100,6 +102,7 @@ export interface CanvasStudioHandle {
 
 interface CanvasStudioProps {
   tool: ToolType;
+  stampShape?: StampShape;
   shapeType?: ShapeType;
   outlineStyle?: ShapeOutlineStyle;
   fillStyle?: ShapeFillStyle;
@@ -147,6 +150,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
   (
     {
       tool,
+      stampShape = 'star',
       shapeType = 'rectangle',
       outlineStyle = 'solid',
       fillStyle = 'none',
@@ -750,6 +754,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       const stabilizerCfg = getStabilizerConfig(stabilization);
       const previewStroke: Stroke =
         currentStroke.tool !== 'shape' &&
+        currentStroke.tool !== 'stamp' &&
         currentStroke.tool !== 'text' &&
         currentStroke.tool !== 'select' &&
         stabilizerCfg.previewPasses > 0 &&
@@ -1889,7 +1894,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       const firstPt: Point = { ...pt, pressure };
       rawPointerBufferRef.current = [firstPt];
       const strokeGradientEnd =
-        tool !== 'eraser'
+        tool !== 'eraser' && tool !== 'blur'
           ? resolveStrokeGradientEnd(activeStrokeColor, activeShapeFillColor, {
               isGradientBrush,
               explicitColorEnd: colorEnd,
@@ -1905,6 +1910,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           strokeGradientEnd,
           paintFinish
         ),
+        ...(tool === 'stamp' ? { stampShape } : {}),
         layerId: effectiveActiveLayerId,
       };
       currentStrokeRef.current = newStroke;
@@ -2005,6 +2011,13 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           enabled: pressureSensitive,
         });
         const rawSample: Point = { ...pt, pressure };
+        if (currentStrokeRef.current.tool === 'stamp') {
+          const last = points[points.length - 1];
+          if (!last || Math.hypot(rawSample.x - last.x, rawSample.y - last.y) >= 2) {
+            points.push(rawSample);
+          }
+          continue;
+        }
         rawPointerBufferRef.current.push(rawSample);
         if (rawPointerBufferRef.current.length > 24) {
           rawPointerBufferRef.current.shift();
@@ -2160,7 +2173,9 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       // Final Multi-Pass Chaikin + Corner-Aware Stroke Smoothing scaled by Stabilization intensity
       const stabilizerCfg = getStabilizerConfig(stabilization);
       const finalPoints =
-        completedStroke.tool === 'shape' || stabilizerCfg.finalPasses <= 0
+        completedStroke.tool === 'shape' ||
+        completedStroke.tool === 'stamp' ||
+        stabilizerCfg.finalPasses <= 0
           ? completedStroke.points
           : smoothStrokePoints(completedStroke.points, {
               passes: stabilizerCfg.finalPasses,
@@ -2798,6 +2813,9 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
               <canvas
                 ref={canvasRef}
                 data-testid="paint-canvas"
+                data-active-tool={tool}
+                data-stamp-shape={stampShape}
+                data-grid-visible={showGrid ? 'true' : 'false'}
                 data-gradient-brush={isGradientBrush ? 'true' : 'false'}
                 data-pressure-sensitive={pressureSensitive ? 'true' : 'false'}
                 data-mirror-mode={symmetryMode}
@@ -2820,14 +2838,35 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 }}
               />
 
-              {/* Gridlines Overlay (View -> Gridlines) */}
+              {/* Blur Brush Diameter Guide Ring */}
+              {tool === 'blur' && hoverCursor && (
+                <div
+                  data-testid="blur-brush-cursor"
+                  aria-hidden="true"
+                  className="absolute pointer-events-none z-30 rounded-full border border-[#1979CA]/80 bg-[#1979CA]/5 -translate-x-1/2 -translate-y-1/2 shadow-[0_0_0_1px_rgba(255,255,255,0.75)]"
+                  style={{
+                    left: `${hoverCursor.x * zoomLevel}px`,
+                    top: `${hoverCursor.y * zoomLevel}px`,
+                    width: `${getBlurBrushStrokeWidth(size) * zoomLevel}px`,
+                    height: `${getBlurBrushStrokeWidth(size) * zoomLevel}px`,
+                  }}
+                />
+              )}
+
+              {/* Gridlines Overlay (View -> Grid) */}
               {showGrid && (
                 <div
+                  data-testid="canvas-grid-overlay"
+                  aria-hidden="true"
                   className="absolute inset-0 pointer-events-none z-20"
                   style={{
-                    backgroundImage:
-                      'linear-gradient(to right, rgba(100, 116, 139, 0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(100, 116, 139, 0.25) 1px, transparent 1px)',
-                    backgroundSize: `${24 * zoomLevel}px ${24 * zoomLevel}px`,
+                    backgroundImage: [
+                      'linear-gradient(to right, rgba(25, 121, 202, 0.24) 1px, transparent 1px)',
+                      'linear-gradient(to bottom, rgba(25, 121, 202, 0.24) 1px, transparent 1px)',
+                      'linear-gradient(to right, rgba(100, 116, 139, 0.22) 1px, transparent 1px)',
+                      'linear-gradient(to bottom, rgba(100, 116, 139, 0.22) 1px, transparent 1px)',
+                    ].join(', '),
+                    backgroundSize: `${96 * zoomLevel}px ${96 * zoomLevel}px, ${96 * zoomLevel}px ${96 * zoomLevel}px, ${24 * zoomLevel}px ${24 * zoomLevel}px, ${24 * zoomLevel}px ${24 * zoomLevel}px`,
                   }}
                 />
               )}

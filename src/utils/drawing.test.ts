@@ -870,4 +870,135 @@ test('resolveStrokeGradientEnd, sampleGradientSpine, and drawGradientQuadraticPa
   assert.ok(new Set(fillColors).size > 5, 'Expected multiple intermediate gradient fill colors');
 });
 
+test('Stamp Brush samples spaced placements, scales with pressure, renders star/heart/circle, and exports valid SVG', async () => {
+  const {
+    STAMP_SHAPES,
+    calculateStampRadius,
+    sampleStampPlacements,
+    stampShapeToSvgPathData,
+    renderStrokeToContext,
+  } = await import('./drawing');
 
+  assert.deepEqual(
+    STAMP_SHAPES.map((s) => s.id),
+    ['star', 'heart', 'circle']
+  );
+
+  const neutralR = calculateStampRadius(5, 0.5);
+  const heavyR = calculateStampRadius(5, 1.0);
+  const lightR = calculateStampRadius(5, 0.1);
+  assert.equal(neutralR, 16);
+  assert.ok(heavyR > neutralR && lightR < neutralR);
+
+  const single = sampleStampPlacements([{ x: 100, y: 120, pressure: 0.5 }], 5);
+  assert.equal(single.length, 1);
+  assert.equal(single[0].x, 100);
+  assert.equal(single[0].y, 120);
+
+  const trail = sampleStampPlacements(
+    [
+      { x: 0, y: 0, pressure: 0.5 },
+      { x: 4, y: 2, pressure: 0.5 },
+      { x: 20, y: 0, pressure: 0.5 },
+      { x: 45, y: 0, pressure: 0.5 },
+      { x: 90, y: 0, pressure: 0.5 },
+    ],
+    5
+  );
+  assert.equal(trail.length, 3);
+  assert.deepEqual(
+    trail.map((p) => p.x),
+    [0, 45, 90]
+  );
+
+  assert.ok(stampShapeToSvgPathData('star', 50, 50, 16).startsWith('M '));
+  assert.ok(stampShapeToSvgPathData('heart', 50, 50, 16).includes('C '));
+  assert.ok(stampShapeToSvgPathData('circle', 50, 50, 16).includes('A '));
+
+  let fillCount = 0;
+  let arcCount = 0;
+  const mockCtx = {
+    globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
+    fillStyle: '#000000',
+    strokeStyle: '#000000',
+    lineWidth: 1,
+    save: () => {},
+    restore: () => {},
+    beginPath: () => {},
+    closePath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    bezierCurveTo: () => {},
+    arc: () => {
+      arcCount++;
+    },
+    fill: () => {
+      fillCount++;
+    },
+    stroke: () => {},
+  } as unknown as CanvasRenderingContext2D;
+
+  renderStrokeToContext(mockCtx, {
+    id: 'stamp_star_1',
+    tool: 'stamp',
+    stampShape: 'star',
+    color: '#FF7F27',
+    size: 8,
+    opacity: 1,
+    points: [{ x: 100, y: 100, pressure: 0.5 }],
+  });
+  assert.equal(fillCount, 2);
+
+  renderStrokeToContext(mockCtx, {
+    id: 'stamp_circle_1',
+    tool: 'stamp',
+    stampShape: 'circle',
+    color: '#00A2E8',
+    size: 8,
+    opacity: 1,
+    points: [
+      { x: 50, y: 50, pressure: 0.5 },
+      { x: 180, y: 50, pressure: 0.5 },
+    ],
+  });
+  assert.ok(arcCount >= 2);
+
+  const svg = exportStrokesToSvgString(
+    [
+      {
+        id: 'stamp_heart_svg',
+        tool: 'stamp',
+        stampShape: 'heart',
+        color: '#ED1C24',
+        size: 6,
+        opacity: 1,
+        points: [{ x: 120, y: 140 }],
+      },
+    ],
+    { width: 400, height: 300, includeWatermark: false }
+  );
+  assert.ok(svg.includes('<path d="M 120'));
+  assert.ok(svg.includes('fill="#ED1C24"'));
+});
+
+test('exportStrokesToSvgString skips solid colored path emission for blur strokes', () => {
+  const svg = exportStrokesToSvgString(
+    [
+      {
+        id: 'blur_svg_1',
+        tool: 'blur',
+        color: '#000000',
+        size: 16,
+        opacity: 1,
+        points: [
+          { x: 40, y: 40 },
+          { x: 140, y: 140 },
+        ],
+      },
+    ],
+    { width: 400, height: 300, includeWatermark: false }
+  );
+  assert.equal(svg.includes('<path '), false);
+  assert.equal(svg.includes('<circle '), false);
+});

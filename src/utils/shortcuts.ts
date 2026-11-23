@@ -2,6 +2,7 @@ export type ShortcutAction =
   | 'undo'
   | 'redo'
   | 'save'
+  | 'quick-save'
   | 'open-templates'
   | 'print'
   | 'new-canvas'
@@ -84,6 +85,7 @@ export const KEYBOARD_SHORTCUTS: ShortcutDescriptor[] = [
 
   // File & View
   { keys: 'Ctrl+S', label: 'Save / Export artwork', category: 'File & View' },
+  { keys: 'Ctrl+Shift+S', label: 'Quick Save PNG to downloads', category: 'File & View' },
   { keys: 'Ctrl+O', label: 'Open Paint Book', category: 'File & View' },
   { keys: 'Ctrl+P', label: 'Print artwork', category: 'File & View' },
   { keys: 'Ctrl+G', label: 'Toggle gridlines', category: 'File & View' },
@@ -130,6 +132,7 @@ export function resolveKeyboardShortcut(
   if (mod && !alt) {
     // Shift+Ctrl combinations first (higher specificity)
     if (shift && key === 'z') return 'redo';
+    if (shift && key === 's') return 'quick-save';
     if (shift && key === 'x') return 'crop';
     if (shift && key === 'r') return 'rotate-ccw';
     if (shift && key === 'f') return 'flip-vertical';

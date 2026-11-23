@@ -17,6 +17,7 @@ import { ClearConfirmModal } from './components/ClearConfirmModal';
 import { ResizeCanvasModal } from './components/ResizeCanvasModal';
 import { ColorsModal } from './components/ColorsModal';
 import { LayersSidebar } from './components/LayersSidebar';
+import { GlitterTrailOverlay } from './components/GlitterTrailOverlay';
 import {
   CanvasLayer,
   DrawingTemplate,
@@ -25,6 +26,7 @@ import {
   ShapeFillStyle,
   ShapeOutlineStyle,
   ShapeType,
+  StampShape,
   Stroke,
   ToolType,
 } from './types';
@@ -54,6 +56,7 @@ import {
 import { TEMPLATES } from './data/templates';
 import { resolveKeyboardShortcut } from './utils/shortcuts';
 import { recordRecentColor } from './utils/color';
+import { generateTimestampedPngFilename } from './utils/quickSave';
 
 export default function App() {
   // Navigation / View State: Welcome Page as front page
@@ -65,6 +68,7 @@ export default function App() {
   const [isRibbonPinned, setIsRibbonPinned] = useState<boolean>(true);
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none');
   const [tool, setTool] = useState<ToolType>('brush');
+  const [stampShape, setStampShape] = useState<StampShape>('star');
   const [lastDrawingTool, setLastDrawingTool] = useState<ToolType>('brush');
   const [shapeType, setShapeType] = useState<ShapeType>('rectangle');
   const [outlineStyle, setOutlineStyle] = useState<ShapeOutlineStyle>('solid');
@@ -87,6 +91,7 @@ export default function App() {
   const [showGrid, setShowGrid] = useState<boolean>(false);
   const [showRulers, setShowRulers] = useState<boolean>(false);
   const [showStatusBar, setShowStatusBar] = useState<boolean>(true);
+  const [showGlitter, setShowGlitter] = useState<boolean>(true);
   const [canvasDimensions, setCanvasDimensions] = useState<{ width: number; height: number }>({
     width: 819,
     height: 460,
@@ -140,6 +145,8 @@ export default function App() {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState<boolean>(false);
   const [isResizeModalOpen, setIsResizeModalOpen] = useState<boolean>(false);
   const [isColorsModalOpen, setIsColorsModalOpen] = useState<boolean>(false);
+  const [isQuickSaving, setIsQuickSaving] = useState<boolean>(false);
+  const [lastQuickSaveFile, setLastQuickSaveFile] = useState<string>('');
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<{ text: string; hex?: string } | null>(null);
@@ -509,6 +516,9 @@ export default function App() {
         case 'save':
           setIsSaveModalOpen(true);
           break;
+        case 'quick-save':
+          void handleQuickSave();
+          break;
         case 'open-templates':
           setIsTemplateModalOpen(true);
           break;
@@ -705,6 +715,66 @@ export default function App() {
     }
   };
 
+  const handleQuickSave = async () => {
+    if (isQuickSaving) return;
+    setIsQuickSaving(true);
+    try {
+      const baseTitle = activeTemplate ? `Pixora ${activeTemplate.name}` : 'Pixora';
+      const filename = generateTimestampedPngFilename(baseTitle);
+      const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
+
+      let pngDataUrl = canvasStudioRef.current?.exportRaster('png', 1.0) ?? null;
+      if (!pngDataUrl) {
+        const fallbackCanvas = document.createElement('canvas');
+        fallbackCanvas.width = Math.max(1, canvasDimensions.width);
+        fallbackCanvas.height = Math.max(1, canvasDimensions.height);
+        const fctx = fallbackCanvas.getContext('2d');
+        if (fctx) {
+          fctx.fillStyle = '#FFFFFF';
+          fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
+          for (const s of visibleOrderedStrokes) {
+            renderStrokeToContext(fctx, s, 'export');
+          }
+          pngDataUrl = fallbackCanvas.toDataURL('image/png', 1.0);
+        }
+      }
+
+      if (!pngDataUrl) {
+        showToast('Could not capture canvas PNG for Quick Save');
+        return;
+      }
+
+      // Immediate browser download (bypasses Save dialog)
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = pngDataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Persist PNG directly into local downloads/ folder via backend endpoint
+      const response = await fetch('/api/quick-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageDataUrl: pngDataUrl, filename }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = (await response.json()) as { filename?: string; relativePath?: string };
+      const savedName = result.filename || filename;
+      setLastQuickSaveFile(savedName);
+      showToast(`Quick Saved: ${result.relativePath || `downloads/${savedName}`}`);
+    } catch (err) {
+      console.error('Quick Save failed:', err);
+      showToast('Quick Save failed writing to downloads folder');
+    } finally {
+      setIsQuickSaving(false);
+    }
+  };
+
   const handleDeleteFromGallery = (id: string) => {
     setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
     showToast('Artwork removed from session');
@@ -718,6 +788,11 @@ export default function App() {
           : 'min-h-screen bg-gradient-to-br from-white via-blue-50/70 to-blue-200/40'
       } text-[#1E1E1E] flex flex-col font-sans selection:bg-blue-200 selection:text-blue-900 overflow-x-hidden`}
     >
+      <GlitterTrailOverlay
+        enabled={showGlitter}
+        accentColor={color}
+        secondaryColor={secondaryColor}
+      />
       {/* Subtle Non-Obstructive Feedback Toast */}
       {toastMessage && (
         <div className="fixed bottom-9 left-3 z-50 pointer-events-none px-3 py-1 bg-[#F5F6F7] border border-[#9AA4B2] shadow-md flex items-center gap-2 text-[11px] font-medium text-[#1E1E1E]">
@@ -737,6 +812,7 @@ export default function App() {
         <>
           <div
             data-testid="paint-studio-window"
+            data-last-quicksave={lastQuickSaveFile}
             className="flex-1 min-h-0 flex flex-col overflow-hidden"
           >
             {/* Traditional Windows Paint Title Bar, Tabs & Ribbon */}
@@ -745,6 +821,12 @@ export default function App() {
               onTabChange={setRibbonTab}
               currentTool={tool}
               onToolSelect={handleToolSelect}
+              stampShape={stampShape}
+              onStampShapeChange={(nextShape) => {
+                setStampShape(nextShape);
+                setTool('stamp');
+                showToast(`Stamp Brush: ${nextShape.charAt(0).toUpperCase() + nextShape.slice(1)}`);
+              }}
               currentShape={shapeType}
               onShapeSelect={setShapeType}
               outlineStyle={outlineStyle}
@@ -793,6 +875,8 @@ export default function App() {
               onOpen={() => setIsTemplateModalOpen(true)}
               onUploadImage={handleUploadImage}
               onSave={() => setIsSaveModalOpen(true)}
+              onQuickSave={() => void handleQuickSave()}
+              isQuickSaving={isQuickSaving}
               onExportFormat={handleExportFormat}
               onPrint={() => window.print()}
               onClearPage={handleClearPage}
@@ -816,13 +900,27 @@ export default function App() {
             onResetZoom={handleResetZoom}
             onFitToWindow={handleFitToWindow}
             showGrid={showGrid}
-            onToggleGrid={() => setShowGrid((prev) => !prev)}
+            onToggleGrid={() =>
+              setShowGrid((prev) => {
+                const next = !prev;
+                showToast(next ? 'Grid overlay shown (Ctrl+G)' : 'Grid overlay hidden (Ctrl+G)');
+                return next;
+              })
+            }
             showRulers={showRulers}
             onToggleRulers={() => setShowRulers((prev) => !prev)}
             showStatusBar={showStatusBar}
             onToggleStatusBar={() => setShowStatusBar((prev) => !prev)}
             showLayersSidebar={showLayersSidebar}
             onToggleLayersSidebar={() => setShowLayersSidebar((prev) => !prev)}
+            showGlitter={showGlitter}
+            onToggleGlitter={() =>
+              setShowGlitter((prev) => {
+                const next = !prev;
+                showToast(next ? 'Mouse sparkle turned on' : 'Mouse sparkle turned off');
+                return next;
+              })
+            }
             layersCount={layers.length}
             onToggleFullScreen={handleToggleFullScreen}
             activeTemplate={activeTemplate}
@@ -864,6 +962,7 @@ export default function App() {
               <CanvasStudio
                 ref={canvasStudioRef}
                 tool={tool}
+                stampShape={stampShape}
                 shapeType={shapeType}
                 outlineStyle={outlineStyle}
                 fillStyle={fillStyle}

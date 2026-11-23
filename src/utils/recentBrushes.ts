@@ -15,6 +15,8 @@ export const BRUSH_OPTIONS: BrushOptionMeta[] = [
   { id: 'crayon', label: 'Crayon', desc: 'Wax grain crayon texture' },
   { id: 'pencil', label: 'Natural pencil', desc: 'Textured graphite pencil' },
   { id: 'watercolor', label: 'Watercolor brush', desc: 'Translucent watercolor bleed' },
+  { id: 'stamp', label: 'Stamp brush', desc: 'Place star, heart & circle stamps' },
+  { id: 'blur', label: 'Blur', desc: 'Soften canvas pixels within stroke area (Gaussian blur)' },
 ];
 
 export interface RecentBrushSetting {

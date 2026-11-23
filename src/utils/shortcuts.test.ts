@@ -38,6 +38,7 @@ test('resolveKeyboardShortcut preserves precedence between Shift and standard Ct
 
 test('resolveKeyboardShortcut handles edit, view, zoom, and unmodified tool/size shortcuts', () => {
   assert.equal(resolveKeyboardShortcut({ key: 's', ctrlKey: true }), 'save');
+  assert.equal(resolveKeyboardShortcut({ key: 'S', ctrlKey: true, shiftKey: true }), 'quick-save');
   assert.equal(resolveKeyboardShortcut({ key: 'o', ctrlKey: true }), 'open-templates');
   assert.equal(resolveKeyboardShortcut({ key: 'p', ctrlKey: true }), 'print');
   assert.equal(resolveKeyboardShortcut({ key: 'c', ctrlKey: true }), 'copy');

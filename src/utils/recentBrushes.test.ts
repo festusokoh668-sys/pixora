@@ -12,6 +12,7 @@ test('getBrushOptionLabel resolves all supported brush options and ignores non-b
   assert.equal(getBrushOptionLabel('oil'), 'Oil brush');
   assert.equal(getBrushOptionLabel('watercolor'), 'Watercolor brush');
   assert.equal(getBrushOptionLabel('calligraphy'), 'Calligraphy brush 1');
+  assert.equal(getBrushOptionLabel('blur'), 'Blur');
   assert.equal(getBrushOptionLabel('eraser'), null);
   assert.equal(getBrushOptionLabel('shape'), null);
 });

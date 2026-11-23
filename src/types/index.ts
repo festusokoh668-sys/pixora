@@ -8,12 +8,16 @@ export type ToolType =
   | 'oil'
   | 'crayon'
   | 'watercolor'
+  | 'stamp'
+  | 'blur'
   | 'eraser'
   | 'picker'
   | 'magnifier'
   | 'text'
   | 'select'
   | 'shape';
+
+export type StampShape = 'star' | 'heart' | 'circle';
 
 export type ShapeType =
   | 'line'
@@ -94,6 +98,8 @@ export interface Stroke {
   // Physical paint & gradient properties
   colorEnd?: string;
   paintFinish?: PaintFinish;
+  // Stamp brush property (tool === 'stamp')
+  stampShape?: StampShape;
   // Geometric shape properties (tool === 'shape')
   shapeType?: ShapeType;
   outlineStyle?: ShapeOutlineStyle;

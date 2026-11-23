@@ -1,4 +1,4 @@
-import { Point, Stroke, ToolType, PaintFinish, MirrorMode } from '../types';
+import { Point, Stroke, ToolType, PaintFinish, MirrorMode, StampShape } from '../types';
 import { floodFill } from './floodFill';
 import {
   buildMultiStopGradientColors,
@@ -8,6 +8,7 @@ import {
   normalizeHexColor,
 } from './color';
 import { renderShapeToContext, shapeToSvgPathData } from './shapes';
+import { applyGaussianBlurStrokeToContext, getBlurBrushStrokeWidth } from './blur';
 
 export interface PaintColorPalette {
   baseColor: string;
@@ -897,6 +898,163 @@ export function drawGradientQuadraticPath(
   ctx.restore();
 }
 
+export const STAMP_SHAPES: Array<{ id: StampShape; label: string }> = [
+  { id: 'star', label: 'Star' },
+  { id: 'heart', label: 'Heart' },
+  { id: 'circle', label: 'Circle' },
+];
+
+/**
+ * Computes rendered radius for a Stamp Brush mark based on brush size and pointer pressure.
+ */
+export function calculateStampRadius(baseSize: number, pressure?: number): number {
+  const clampedSize = Math.max(1, Number.isFinite(baseSize) ? baseSize : 5);
+  const p =
+    typeof pressure === 'number' && Number.isFinite(pressure)
+      ? Math.max(0.05, Math.min(1, pressure))
+      : 0.5;
+  const baseRadius = 7 + clampedSize * 1.8;
+  const pressureScale = 0.5 + p * 1.0; // neutral p=0.5 -> 1.0x
+  return Math.max(5, Math.round(baseRadius * pressureScale * 10) / 10);
+}
+
+/**
+ * Samples evenly spaced stamp centers along pointer points so single taps drop one crisp
+ * stamp and drags lay down a spaced trail without overlapping clutter.
+ */
+export function sampleStampPlacements(
+  points: Point[],
+  baseSize: number,
+  spacingFactor: number = 2.15
+): Array<{ x: number; y: number; pressure: number; radius: number }> {
+  if (points.length === 0) return [];
+
+  const first = points[0];
+  const firstP = getPointPressure(first);
+  const placements: Array<{ x: number; y: number; pressure: number; radius: number }> = [
+    {
+      x: first.x,
+      y: first.y,
+      pressure: firstP,
+      radius: calculateStampRadius(baseSize, firstP),
+    },
+  ];
+
+  let lastPlaced = placements[0];
+  for (let i = 1; i < points.length; i++) {
+    const pt = points[i];
+    const pr = getPointPressure(pt);
+    const nextRadius = calculateStampRadius(baseSize, pr);
+    const minSpacing = Math.max(10, Math.max(lastPlaced.radius, nextRadius) * spacingFactor);
+    const dist = Math.hypot(pt.x - lastPlaced.x, pt.y - lastPlaced.y);
+
+    if (dist >= minSpacing) {
+      placements.push({
+        x: pt.x,
+        y: pt.y,
+        pressure: pr,
+        radius: nextRadius,
+      });
+      lastPlaced = placements[placements.length - 1];
+    }
+  }
+
+  return placements;
+}
+
+/**
+ * Traces a centered Star, Heart, or Circle path on a Canvas2D context for Stamp Brush marks.
+ */
+export function traceStampShapePath(
+  ctx: CanvasRenderingContext2D,
+  shape: StampShape,
+  cx: number,
+  cy: number,
+  radius: number
+): void {
+  const r = Math.max(3, radius);
+  ctx.beginPath();
+
+  if (shape === 'circle') {
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.closePath();
+    return;
+  }
+
+  if (shape === 'star') {
+    const pointsCount = 5;
+    const innerR = r * 0.44;
+    for (let i = 0; i < pointsCount * 2; i++) {
+      const angle = -Math.PI / 2 + (i * Math.PI) / pointsCount;
+      const rad = i % 2 === 0 ? r : innerR;
+      const px = cx + Math.cos(angle) * rad;
+      const py = cy + Math.sin(angle) * rad;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    return;
+  }
+
+  // Heart centered visually at (cx, cy) within [-r, +r]
+  const topY = cy - r * 0.34;
+  const bottomY = cy + r * 0.92;
+  ctx.moveTo(cx, bottomY);
+  ctx.bezierCurveTo(
+    cx - r * 1.18,
+    cy + r * 0.24,
+    cx - r * 0.98,
+    cy - r * 0.98,
+    cx,
+    topY
+  );
+  ctx.bezierCurveTo(
+    cx + r * 0.98,
+    cy - r * 0.98,
+    cx + r * 1.18,
+    cy + r * 0.24,
+    cx,
+    bottomY
+  );
+  ctx.closePath();
+}
+
+/**
+ * Converts a Stamp Brush shape at (cx, cy, radius) into an SVG path `d` string.
+ */
+export function stampShapeToSvgPathData(
+  shape: StampShape,
+  cx: number,
+  cy: number,
+  radius: number
+): string {
+  const r = Math.max(3, radius);
+  const f = (n: number) => Math.round(n * 10) / 10;
+
+  if (shape === 'circle') {
+    return `M ${f(cx - r)} ${f(cy)} A ${f(r)} ${f(r)} 0 1 0 ${f(cx + r)} ${f(cy)} A ${f(r)} ${f(r)} 0 1 0 ${f(cx - r)} ${f(cy)} Z`;
+  }
+
+  if (shape === 'star') {
+    const pointsCount = 5;
+    const innerR = r * 0.44;
+    const cmds: string[] = [];
+    for (let i = 0; i < pointsCount * 2; i++) {
+      const angle = -Math.PI / 2 + (i * Math.PI) / pointsCount;
+      const rad = i % 2 === 0 ? r : innerR;
+      const px = f(cx + Math.cos(angle) * rad);
+      const py = f(cy + Math.sin(angle) * rad);
+      cmds.push(`${i === 0 ? 'M' : 'L'} ${px} ${py}`);
+    }
+    cmds.push('Z');
+    return cmds.join(' ');
+  }
+
+  const topY = f(cy - r * 0.34);
+  const bottomY = f(cy + r * 0.92);
+  return `M ${f(cx)} ${bottomY} C ${f(cx - r * 1.18)} ${f(cy + r * 0.24)}, ${f(cx - r * 0.98)} ${f(cy - r * 0.98)}, ${f(cx)} ${topY} C ${f(cx + r * 0.98)} ${f(cy - r * 0.98)}, ${f(cx + r * 1.18)} ${f(cy + r * 0.24)}, ${f(cx)} ${bottomY} Z`;
+}
+
 /**
  * Creates a new stroke object with optional paint finish and two-tone gradient
  */
@@ -1133,6 +1291,10 @@ export function applyToolStyleToContext(
     ctx.lineWidth = stroke.size * 2.2;
     ctx.globalAlpha = stroke.opacity * 0.35;
     ctx.shadowBlur = 0;
+  } else if (stroke.tool === 'blur') {
+    ctx.lineWidth = getBlurBrushStrokeWidth(stroke.size);
+    ctx.globalAlpha = stroke.opacity;
+    ctx.shadowBlur = 0;
   } else {
     ctx.lineWidth = stroke.size;
     ctx.globalAlpha = stroke.opacity;
@@ -1262,6 +1424,56 @@ export function renderStrokeToContext(
 
   if (stroke.points.length === 0) return;
 
+  if (stroke.tool === 'stamp') {
+    const stampShape: StampShape = stroke.stampShape || 'star';
+    const placements = sampleStampPlacements(stroke.points, stroke.size);
+    const total = Math.max(1, placements.length - 1);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = stroke.opacity;
+
+    placements.forEach((mark, idx) => {
+      const fillHex =
+        stroke.colorEnd && placements.length > 1
+          ? interpolateHexColors(stroke.color, stroke.colorEnd, idx / total)
+          : stroke.color;
+      const markPalette = getPaintColorPalette(fillHex);
+
+      // Subtle soft drop shadow for tactile stamp lift
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.14)';
+      traceStampShapePath(ctx, stampShape, mark.x + 1, mark.y + 1.4, mark.radius);
+      ctx.fill();
+      ctx.restore();
+
+      // Main crisp filled stamp (or two-tone linear fill when gradient mode is set on single stamp)
+      ctx.save();
+      if (stroke.colorEnd && placements.length === 1 && typeof ctx.createLinearGradient === 'function') {
+        const grad = ctx.createLinearGradient(
+          mark.x - mark.radius,
+          mark.y - mark.radius,
+          mark.x + mark.radius,
+          mark.y + mark.radius
+        );
+        grad.addColorStop(0, stroke.color);
+        grad.addColorStop(1, stroke.colorEnd);
+        ctx.fillStyle = grad;
+      } else {
+        ctx.fillStyle = fillHex;
+      }
+      traceStampShapePath(ctx, stampShape, mark.x, mark.y, mark.radius);
+      ctx.fill();
+      ctx.lineWidth = Math.max(1, Math.min(2.2, mark.radius * 0.08));
+      ctx.strokeStyle = markPalette.shadowColor;
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    ctx.restore();
+    return;
+  }
+
   if (stroke.tool === 'bucket') {
     const pt = stroke.points[0];
     if (pt) {
@@ -1275,6 +1487,11 @@ export function renderStrokeToContext(
     applyToolStyleToContext(ctx, stroke, mode);
     drawQuadraticPath(ctx, stroke.points, { scaleAlpha: false });
     ctx.restore();
+    return;
+  }
+
+  if (stroke.tool === 'blur') {
+    applyGaussianBlurStrokeToContext(ctx, stroke);
     return;
   }
 
@@ -1671,6 +1888,27 @@ export function exportStrokesToSvgString(
         transformAttr = ` transform="translate(${bx} ${by}) scale(${stroke.flipH ? -1 : 1} ${stroke.flipV ? -1 : 1}) translate(${-bx} ${-by})"`;
       }
       elements += `  <path d="${d}" ${fillAttr} ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" opacity="${stroke.opacity}"${transformAttr} />\n`;
+      continue;
+    }
+
+    // Stamp Brush shapes (star, heart, circle)
+    if (stroke.tool === 'stamp') {
+      const stampShape: StampShape = stroke.stampShape || 'star';
+      const placements = sampleStampPlacements(stroke.points, stroke.size);
+      const total = Math.max(1, placements.length - 1);
+      placements.forEach((mark, idx) => {
+        const fillHex =
+          stroke.colorEnd && placements.length > 1
+            ? interpolateHexColors(stroke.color, stroke.colorEnd, idx / total)
+            : stroke.color;
+        const d = stampShapeToSvgPathData(stampShape, mark.x, mark.y, mark.radius);
+        elements += `  <path d="${d}" fill="${fillHex}" stroke="${getPaintColorPalette(fillHex).shadowColor}" stroke-width="${Math.max(1, Math.round(mark.radius * 0.08 * 10) / 10)}" opacity="${stroke.opacity}" />\n`;
+      });
+      continue;
+    }
+
+    // Blur brush only softens raster canvas pixels (skip opaque stroke vector generation)
+    if (stroke.tool === 'blur') {
       continue;
     }
 
