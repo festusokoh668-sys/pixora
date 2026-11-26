@@ -28,6 +28,7 @@ interface SaveArtworkModalProps {
   layers?: CanvasLayer[];
   activeTemplate: DrawingTemplate | null;
   onSaveToGallery: (artwork: SavedArtwork) => Promise<void> | void;
+  onOpenGallery?: () => void;
   canvasDimensions?: { width: number; height: number };
 }
 
@@ -38,6 +39,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   layers,
   activeTemplate,
   onSaveToGallery,
+  onOpenGallery,
   canvasDimensions = { width: 1200, height: 1200 },
 }) => {
   const orderedStrokes = React.useMemo(
@@ -317,6 +319,8 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       await onSaveToGallery(artwork);
       setIsSavedSuccessfully(true);
       triggerConfetti();
+      onClose();
+      onOpenGallery?.();
     } catch (error) {
       console.error('Could not save artwork to Pixora Gallery:', error);
       setShareFeedback('Could not save this artwork to your Gallery. Please try again.');
