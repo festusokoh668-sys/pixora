@@ -9,6 +9,8 @@ interface SessionGalleryModalProps {
   artworks: SavedArtwork[];
   onDeleteArtwork: (id: string) => void;
   onOpenCanvas: () => void;
+  onOpenArtwork: (artwork: SavedArtwork) => void;
+  isLoading?: boolean;
 }
 
 export const SessionGalleryModal: React.FC<SessionGalleryModalProps> = ({
@@ -17,6 +19,8 @@ export const SessionGalleryModal: React.FC<SessionGalleryModalProps> = ({
   artworks,
   onDeleteArtwork,
   onOpenCanvas,
+  onOpenArtwork,
+  isLoading = false,
 }) => {
   if (!isOpen) return null;
 
@@ -115,6 +119,15 @@ export const SessionGalleryModal: React.FC<SessionGalleryModalProps> = ({
                     )}
 
                     <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => onOpenArtwork(art)}
+                        disabled={!art.project}
+                        className="flex-1 py-1.5 px-3 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors border border-emerald-200 cursor-pointer"
+                        title={art.project ? "Open and continue editing" : "No editable project data available"}
+                      >
+                        <Brush className="w-3.5 h-3.5" />
+                        <span>Open</span>
+                      </button>
                       <button
                         onClick={() => handleDownloadItem(art)}
                         className="flex-1 py-1.5 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors border border-blue-200 cursor-pointer"
