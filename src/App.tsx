@@ -1200,24 +1200,14 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
 
-      // Persist PNG directly into local downloads/ folder via backend endpoint
-      const response = await fetch('/api/quick-save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageDataUrl: pngDataUrl, filename }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const result = (await response.json()) as { filename?: string; relativePath?: string };
-      const savedName = result.filename || filename;
-      setLastQuickSaveFile(savedName);
-      showToast(`Quick Saved: ${result.relativePath || `downloads/${savedName}`}`);
+      // The browser owns the user's Downloads folder; Vercel does not provide
+      // a persistent writable project folder for this client-side action.
+      setLastQuickSaveFile(filename);
+      showToast(`Downloaded ${filename}`);
+    
     } catch (err) {
       console.error('Quick Save failed:', err);
-      showToast('Quick Save failed writing to downloads folder');
+      showToast('Quick Save could not export the canvas. Please try again.');
     } finally {
       setIsQuickSaving(false);
     }
