@@ -57,6 +57,7 @@ import { TEMPLATES } from './data/templates';
 import { resolveKeyboardShortcut } from './utils/shortcuts';
 import { recordRecentColor } from './utils/color';
 import { generateTimestampedPngFilename } from './utils/quickSave';
+import { loadLocalArtworks, saveLocalArtwork, deleteLocalArtwork } from './utils/artworkPersistence';
 
 export default function App() {
   // Navigation / View State: Welcome Page as front page
@@ -135,7 +136,7 @@ export default function App() {
   const [templateOpacity, setTemplateOpacity] = useState<number>(0.35);
 
   // Saved Artworks (Session Gallery)
-  const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);
+  const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);\n  const [isArtworkLibraryReady, setIsArtworkLibraryReady] = useState(false);\n\n  useEffect(() => {\n    let cancelled = false;\n    loadLocalArtworks().then((items) => {\n      if (!cancelled) setSavedArtworks(items);\n    }).catch((error) => {\n      console.error('Could not restore local Pixora artwork:', error);\n      if (!cancelled) showToast('Could not load local artwork. Your browser storage may be unavailable.');\n    }).finally(() => {\n      if (!cancelled) setIsArtworkLibraryReady(true);\n    });\n    return () => { cancelled = true; };\n  }, [showToast]);
 
   // Modals
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState<boolean>(false);
@@ -654,9 +655,29 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  const handleSaveToGallery = (artwork: SavedArtwork) => {
-    setSavedArtworks((prev) => [artwork, ...prev]);
-    showToast(`Saved "${artwork.title}"!`);
+  const handleSaveToGallery = async (artwork: SavedArtwork) => {
+    const durableArtwork: SavedArtwork = {
+      ...artwork,
+      savedAt: Date.now(),
+      storageScope: 'device',
+      project: artwork.project ?? {
+        strokes,
+        layers,
+        canvasDimensions,
+        activeLayerId,
+        templateId: activeTemplate?.id,
+        templateOpacity,
+      },
+    };
+    try {
+      await saveLocalArtwork(durableArtwork);
+      setSavedArtworks((prev) => [durableArtwork, ...prev.filter((item) => item.id !== durableArtwork.id)]);
+      showToast(`Saved "${durableArtwork.title}" on this device`);
+    } catch (error) {
+      console.error('Pixora local artwork save failed:', error);
+      showToast('Save failed. Your artwork was not stored permanently.');
+      throw error;
+    }
   };
 
   const handleExportFormat = (format: 'jpg' | 'png' | 'svg') => {
@@ -752,21 +773,8 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
 
-      // Persist PNG directly into local downloads/ folder via backend endpoint
-      const response = await fetch('/api/quick-save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageDataUrl: pngDataUrl, filename }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const result = (await response.json()) as { filename?: string; relativePath?: string };
-      const savedName = result.filename || filename;
-      setLastQuickSaveFile(savedName);
-      showToast(`Quick Saved: ${result.relativePath || `downloads/${savedName}`}`);
+      setLastQuickSaveFile(filename);
+      showToast(`Downloaded ${filename}`);
     } catch (err) {
       console.error('Quick Save failed:', err);
       showToast('Quick Save failed writing to downloads folder');
@@ -776,8 +784,34 @@ export default function App() {
   };
 
   const handleDeleteFromGallery = (id: string) => {
-    setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
-    showToast('Artwork removed from session');
+    deleteLocalArtwork(id).then(() => {
+      setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
+      showToast('Artwork deleted from this device');
+    }).catch((error) => {
+      console.error('Could not delete Pixora artwork:', error);
+      showToast('Could not delete artwork. Please try again.');
+    });
+  };
+
+  const handleOpenSavedArtwork = (artwork: SavedArtwork) => {
+    if (!artwork.project) {
+      showToast('This older gallery item has no editable project data.');
+      return;
+    }
+    setStrokes(artwork.project.strokes ?? []);
+    setLayers(artwork.project.layers?.length ? artwork.project.layers : createInitialLayers());
+    setCanvasDimensions(artwork.project.canvasDimensions ?? { width: 819, height: 460 });
+    setActiveLayerId(artwork.project.activeLayerId ?? DEFAULT_LAYER_ID);
+    const template = artwork.project.templateId
+      ? TEMPLATES.find((item) => item.id === artwork.project?.templateId) ?? null
+      : null;
+    setActiveTemplate(template);
+    setTemplateOpacity(artwork.project.templateOpacity ?? 0.35);
+    historyRef.current = new HistoryManager(35);
+    updateHistoryFlags();
+    setCurrentView('studio');
+    setIsGalleryModalOpen(false);
+    showToast(`Opened "${artwork.title}"`);
   };
 
   return (
@@ -1125,6 +1159,8 @@ export default function App() {
             artworks={savedArtworks}
             onDeleteArtwork={handleDeleteFromGallery}
             onOpenCanvas={() => setIsGalleryModalOpen(false)}
+            onOpenArtwork={handleOpenSavedArtwork}
+            isLoading={!isArtworkLibraryReady}
           />
 
           {/* Creative Spark / Tips Modal */}
