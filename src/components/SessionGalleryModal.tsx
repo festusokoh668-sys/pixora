@@ -54,7 +54,7 @@ export const SessionGalleryModal: React.FC<SessionGalleryModalProps> = ({
                 pixora Studio Gallery
               </h2>
               <p className="text-xs text-slate-500">
-                {artworks.length} artwork{artworks.length === 1 ? '' : 's'} created during this session
+                {artworks.length} saved artwork{artworks.length === 1 ? '' : 's'} on this device
               </p>
             </div>
           </div>
@@ -69,7 +69,12 @@ export const SessionGalleryModal: React.FC<SessionGalleryModalProps> = ({
 
         {/* Artworks List / Grid */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 bg-slate-50/50">
-          {artworks.length === 0 ? (
+          {isLoading ? (
+            <div className="py-12 flex flex-col items-center justify-center text-center" role="status" aria-live="polite">
+              <div className="w-10 h-10 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin mb-3" />
+              <p className="text-sm font-semibold text-slate-700">Loading saved artwork…</p>
+            </div>
+          ) : artworks.length === 0 ? (
             <div className="py-12 flex flex-col items-center justify-center text-center">
               <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center mb-4">
                 <Brush className="w-8 h-8 text-blue-600" />
