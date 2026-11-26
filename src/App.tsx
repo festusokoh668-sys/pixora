@@ -1534,6 +1534,7 @@ export default function App() {
             user={currentUser}
             onOpenAuth={handleOpenAuth}
             onSaveToCloud={handleOpenCloudSave}
+            onOpenStudioGallery={() => setIsGalleryModalOpen(true)}
             onOpenCloudGallery={handleOpenCloudGallery}
             hasUnsavedChanges={hasUnsavedChanges}
             currentArtworkTitle={currentCloudArtworkTitle}
