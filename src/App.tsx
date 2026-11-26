@@ -301,7 +301,17 @@ export default function App() {
           })
         );
 
-        if (!cancelled) setSavedArtworks(restored.filter((item): item is SavedArtwork => item !== null));
+        if (!cancelled) {
+          const available = restored.filter((item): item is SavedArtwork => item !== null);
+          // Do not overwrite an artwork saved while the initial IndexedDB read was in progress.
+          setSavedArtworks((current) => {
+            const currentIds = new Set(current.map((item) => item.id));
+            return [
+              ...current,
+              ...available.filter((item) => !currentIds.has(item.id)),
+            ];
+          });
+        }
       } catch (error) {
         console.error('Could not restore Pixora Studio Gallery:', error);
         if (!cancelled) showToast('Could not load saved gallery artwork from this device.');
