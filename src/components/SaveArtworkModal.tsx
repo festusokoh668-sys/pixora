@@ -27,7 +27,7 @@ interface SaveArtworkModalProps {
   strokes: Stroke[];
   layers?: CanvasLayer[];
   activeTemplate: DrawingTemplate | null;
-  onSaveToGallery: (artwork: SavedArtwork) => void;
+  onSaveToGallery: (artwork: SavedArtwork) => Promise<void> | void;
   canvasDimensions?: { width: number; height: number };
 }
 
@@ -198,7 +198,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
     });
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (exportFormat === 'svg') {
       const svgString = getSvgString();
       const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
@@ -233,10 +233,13 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       templateName: activeTemplate ? activeTemplate.name : undefined,
       strokesCount: strokes.length,
     };
-    onSaveToGallery(artwork);
-
-    setIsSavedSuccessfully(true);
-    triggerConfetti();
+    try {
+      await onSaveToGallery(artwork);
+      setIsSavedSuccessfully(true);
+      triggerConfetti();
+    } catch {
+      setShareFeedback('Artwork could not be saved permanently. Please try again.');
+    }
   };
 
   const handleCopySvgCode = async () => {
@@ -281,7 +284,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
     setTimeout(() => setShareFeedback(null), 3000);
   };
 
-  const handleSaveToGalleryOnly = () => {
+  const handleSaveToGalleryOnly = async () => {
     if (!previewDataUrl) return;
 
     const artwork: SavedArtwork = {
@@ -292,10 +295,13 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       templateName: activeTemplate ? activeTemplate.name : undefined,
       strokesCount: strokes.length,
     };
-    onSaveToGallery(artwork);
-
-    setIsSavedSuccessfully(true);
-    triggerConfetti();
+    try {
+      await onSaveToGallery(artwork);
+      setIsSavedSuccessfully(true);
+      triggerConfetti();
+    } catch {
+      setShareFeedback('Artwork could not be saved permanently. Please try again.');
+    }
   };
 
   // Safe link sharing that never breaks
