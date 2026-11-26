@@ -1718,6 +1718,7 @@ export default function App() {
             layers={layers}
             activeTemplate={activeTemplate}
             onSaveToGallery={handleSaveToGallery}
+            onOpenGallery={() => setIsGalleryModalOpen(true)}
             canvasDimensions={canvasDimensions}
           />
 
