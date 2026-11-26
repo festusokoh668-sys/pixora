@@ -136,7 +136,18 @@ export default function App() {
   const [templateOpacity, setTemplateOpacity] = useState<number>(0.35);
 
   // Saved Artworks (Session Gallery)
-  const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);\n  const [isArtworkLibraryReady, setIsArtworkLibraryReady] = useState(false);\n\n  useEffect(() => {\n    let cancelled = false;\n    loadLocalArtworks().then((items) => {\n      if (!cancelled) setSavedArtworks(items);\n    }).catch((error) => {\n      console.error('Could not restore local Pixora artwork:', error);\n      if (!cancelled) showToast('Could not load local artwork. Your browser storage may be unavailable.');\n    }).finally(() => {\n      if (!cancelled) setIsArtworkLibraryReady(true);\n    });\n    return () => { cancelled = true; };\n  }, [showToast]);
+  const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);\n  const [isArtworkLibraryReady, setIsArtworkLibraryReady] = useState(false);\n
+
+  useEffect(() => {
+    let cancelled = false;\n    loadLocalArtworks().then((items) => {
+      if (!cancelled) setSavedArtworks(items);
+    }).catch((error) => {
+      console.error('Could not restore local Pixora artwork:', error);
+      if (!cancelled) showToast('Could not load local artwork. Your browser storage may be unavailable.');
+    }).finally(() => {
+      if (!cancelled) setIsArtworkLibraryReady(true);\n    });
+    return () => { cancelled = true; };
+  }, [showToast]);
 
   // Modals
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState<boolean>(false);
