@@ -203,6 +203,7 @@ export default function App() {
 
   // Saved Artworks (Session Gallery)
   const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);
+  const [isGalleryLoading, setIsGalleryLoading] = useState<boolean>(true);
 
   // Modals & Cloud State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -315,6 +316,8 @@ export default function App() {
       } catch (error) {
         console.error('Could not restore Pixora Studio Gallery:', error);
         if (!cancelled) showToast('Could not load saved gallery artwork from this device.');
+      } finally {
+        if (!cancelled) setIsGalleryLoading(false);
       }
     };
 
@@ -1725,6 +1728,7 @@ export default function App() {
             artworks={savedArtworks}
             onDeleteArtwork={handleDeleteFromGallery}
             onOpenCanvas={() => setIsGalleryModalOpen(false)}
+            isLoading={isGalleryLoading}
           />
 
           {/* Creative Spark / Tips Modal */}
