@@ -26,6 +26,10 @@ import {
   updateLocalArtworkMetadata,
   saveUploadedMedia,
   getUploadedMedia,
+  getUserLocalArtworks,
+  getArtworkPreview,
+  saveLocalArtwork,
+  deleteLocalArtwork,
 } from './utils/indexedDB';
 import {
   saveArtworkToFirestore,
@@ -271,6 +275,44 @@ export default function App() {
       setToastMessage(null);
     }, 2600);
   }, []);
+
+  // Restore the device-local Studio Gallery from IndexedDB after every app load.
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreGallery = async () => {
+      try {
+        const records = await getUserLocalArtworks('device-local');
+        const restored = await Promise.all(
+          records.map(async (record): Promise<SavedArtwork | null> => {
+            const dataUrl = await getArtworkPreview(record.id);
+            if (!dataUrl) return null;
+            return {
+              id: record.id,
+              title: record.title,
+              date: new Date(record.updatedAt || record.createdAt).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+              dataUrl,
+              templateName: record.templateName || undefined,
+              strokesCount: record.strokesCount,
+            };
+          })
+        );
+
+        if (!cancelled) setSavedArtworks(restored.filter((item): item is SavedArtwork => item !== null));
+      } catch (error) {
+        console.error('Could not restore Pixora Studio Gallery:', error);
+        if (!cancelled) showToast('Could not load saved gallery artwork from this device.');
+      }
+    };
+
+    void restoreGallery();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
 
   const handleRecordRecentColor = useCallback((hex: string) => {
     setRecentColors((prev) => recordRecentColor(prev, hex));
@@ -1011,9 +1053,45 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  const handleSaveToGallery = (artwork: SavedArtwork) => {
-    setSavedArtworks((prev) => [artwork, ...prev]);
-    showToast(`Saved "${artwork.title}"!`);
+  const handleSaveToGallery = async (artwork: SavedArtwork) => {
+    const now = new Date().toISOString();
+    const localRecord: LocalArtworkRecord = {
+      id: artwork.id,
+      userId: 'device-local',
+      title: artwork.title,
+      description: '',
+      canvasWidth: canvasDimensions.width,
+      canvasHeight: canvasDimensions.height,
+      strokesCount: strokes.length,
+      templateId: activeTemplate && !activeTemplate.id.startsWith('custom_') ? activeTemplate.id : '',
+      templateName: activeTemplate?.name || '',
+      difficulty: activeTemplate?.difficulty || '',
+      isCustomTemplate: Boolean(activeTemplate?.id.startsWith('custom_')),
+      editableData: {
+        canvasWidth: canvasDimensions.width,
+        canvasHeight: canvasDimensions.height,
+        strokes,
+        layers,
+        activeLayerId,
+        template: activeTemplate && !activeTemplate.id.startsWith('custom_') ? activeTemplate : null,
+        templateOpacity,
+        zoomLevel,
+      },
+      syncStatus: 'local_only',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      // Save the project and its preview before showing success in the gallery.
+      await saveLocalArtwork(localRecord, artwork.dataUrl);
+      setSavedArtworks((prev) => [artwork, ...prev.filter((item) => item.id !== artwork.id)]);
+      showToast(`Saved "${artwork.title}" on this device`);
+    } catch (error) {
+      console.error('Pixora Studio Gallery save failed:', error);
+      showToast('Could not save artwork permanently. Please try again.');
+      throw error;
+    }
   };
 
   const handleExportFormat = (format: 'jpg' | 'png' | 'svg') => {
@@ -1227,9 +1305,15 @@ export default function App() {
     }
   };
 
-  const handleDeleteFromGallery = (id: string) => {
-    setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
-    showToast('Artwork removed from session');
+  const handleDeleteFromGallery = async (id: string) => {
+    try {
+      await deleteLocalArtwork(id);
+      setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
+      showToast('Artwork deleted from this device');
+    } catch (error) {
+      console.error('Could not delete Pixora gallery artwork:', error);
+      showToast('Could not delete artwork. Please try again.');
+    }
   };
 
   return (
