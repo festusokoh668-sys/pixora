@@ -164,6 +164,7 @@ export interface PaintRibbonProps {
   onOpenAuth?: (mode?: 'signin' | 'signup' | 'profile') => void;
   onSaveToCloud?: () => void;
   onOpenCloudGallery?: () => void;
+  onOpenStudioGallery?: () => void;
   hasUnsavedChanges?: boolean;
   currentArtworkTitle?: string;
 }
@@ -284,6 +285,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onOpenAuth,
   onSaveToCloud,
   onOpenCloudGallery,
+  onOpenStudioGallery,
   hasUnsavedChanges = false,
   currentArtworkTitle,
 }) => {
@@ -625,6 +627,18 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
             </button>
           )}
 
+          {onOpenStudioGallery && (
+            <button
+              type="button"
+              data-testid="titlebar-studio-gallery-btn"
+              onClick={onOpenStudioGallery}
+              className="w-6 h-6 rounded-full flex items-center justify-center bg-white dark:bg-[#1E232D] border border-slate-300 dark:border-slate-600 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-blue-600 dark:text-blue-400 shadow-2xs hover:shadow-xs transition-all active:scale-95 cursor-pointer"
+              title="Studio Gallery (This Device)"
+              aria-label="Open Studio Gallery"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+            </button>
+          )}
           {onOpenCloudGallery && (
             <button
               type="button"
