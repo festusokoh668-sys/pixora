@@ -1,0 +1,34 @@
+name: Pixora checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - main
+      - fix/persistent-gallery-on-main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type-check project
+        run: bun run lint
+
+      - name: Run utility tests
+        run: bun run test
+
+      - name: Build production bundle
+        run: bun run build
