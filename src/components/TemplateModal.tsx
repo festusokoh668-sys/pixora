@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Search, Check, Layers, Image as ImageIcon, Video, Upload, Loader2, Sparkles, Globe, ShieldAlert, Award, FileText } from 'lucide-react';
+import { X, Search, Check, Layers, Image as ImageIcon, Video, Upload, Loader2, Sparkles, Globe, ShieldAlert, Award, FileText, ChevronUp, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { DrawingTemplate, DifficultyLevel, DrawingCollection } from '../types';
 import { TEMPLATES, DRAWING_COLLECTIONS } from '../data/templates';
 import { searchRealPhotoTemplates } from '../utils/mediaSearch';
 import { generateFallbackSvgDataUrl } from '../utils/edgeDetection';
+import { saveUploadedMedia } from '../utils/indexedDB';
 
 interface TemplateModalProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
   const [collectionActiveLevel, setCollectionActiveLevel] = useState<Record<string, 'Easy' | 'Medium' | 'Hard'>>({});
   const [liveSearchResults, setLiveSearchResults] = useState<DrawingTemplate[]>([]);
   const [isSearchingOnline, setIsSearchingOnline] = useState<boolean>(false);
+  const [areControlsHidden, setAreControlsHidden] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceTimerRef = useRef<any>(null);
 
@@ -89,11 +91,35 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
     if (!file) return;
 
     const isVideo = file.type.startsWith('video/');
-    const url = URL.createObjectURL(file);
+    const customId = `custom_${Date.now()}`;
+    const baseName = file.name.replace(/\.[^/.]+$/, '').slice(0, 24) || 'Custom Media';
 
+    if (!isVideo && file.size <= 8 * 1024 * 1024) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        if (dataUrl) {
+          void saveUploadedMedia(customId, dataUrl, file.name);
+        }
+        onSelectTemplate({
+          id: customId,
+          name: baseName,
+          category: 'nature',
+          difficulty: 'Easy',
+          type: 'photo',
+          mediaUrl: dataUrl || URL.createObjectURL(file),
+          description: 'Your uploaded photo reference',
+        });
+        onClose();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
     const customTemplate: DrawingTemplate = {
-      id: `custom_${Date.now()}`,
-      name: file.name.replace(/\.[^/.]+$/, '').slice(0, 24) || 'Custom Media',
+      id: customId,
+      name: baseName,
       category: 'nature',
       difficulty: 'Easy',
       type: isVideo ? 'video' : 'photo',
@@ -221,38 +247,60 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-md p-0 sm:p-4 animate-in fade-in duration-200 cursor-pointer"
+      className="fixed inset-0 z-50 flex items-stretch justify-stretch p-0 bg-black/60 backdrop-blur-md animate-in fade-in duration-200 cursor-pointer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="template-gallery-title"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-4xl max-h-[92vh] sm:max-h-[88vh] bg-white border-t sm:border border-slate-200 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-slate-800 cursor-default"
+        data-testid="paint-books-modal-container"
+        className="w-screen h-screen max-w-none max-h-none bg-white rounded-none border-0 shadow-none flex flex-col overflow-hidden text-slate-800 cursor-default"
       >
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-white">
-          <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5 text-blue-600" />
-            <div>
+        <div className={`${areControlsHidden ? 'px-4 py-3' : 'p-4 sm:p-5'} border-b border-slate-100 flex items-center justify-between bg-white transition-all`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <Layers className="w-5 h-5 text-blue-600 shrink-0" />
+            <div className="min-w-0">
               <h2
                 id="template-gallery-title"
-                className="text-lg sm:text-xl font-bold text-slate-900 leading-tight"
+                className="text-lg sm:text-xl font-bold text-slate-900 leading-tight truncate"
               >
                 Paint Books
               </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Choose a paint book collection and difficulty level to start tracing
-              </p>
+              {!areControlsHidden && (
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Choose a paint book collection and difficulty level to start tracing
+                </p>
+              )}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-            aria-label="Close paint books"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              data-testid="toggle-paintbook-controls-btn"
+              onClick={() => setAreControlsHidden((prev) => !prev)}
+              aria-expanded={!areControlsHidden}
+              aria-label={areControlsHidden ? 'Expand Paint Books filters' : 'Collapse Paint Books filters'}
+              title={areControlsHidden ? 'Expand search, upload & filters' : 'Collapse search, upload & filters'}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-slate-900 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600" />
+              <span>{areControlsHidden ? 'Show Filters' : 'Hide Filters'}</span>
+              {areControlsHidden ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronUp className="w-3.5 h-3.5" />
+              )}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+              aria-label="Close paint books"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Hidden File Input */}
@@ -265,7 +313,11 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
         />
 
         {/* Search, Upload, and Clean Spacious Filters */}
-        <div className="p-3 sm:p-5 border-b border-slate-100 bg-slate-50/70 flex flex-col gap-2.5 sm:gap-3.5 shrink-0">
+        {!areControlsHidden && (
+          <div
+            data-testid="paintbook-controls-panel"
+            className="p-3 sm:p-5 border-b border-slate-100 bg-slate-50/70 flex flex-col gap-2.5 sm:gap-3.5 shrink-0"
+          >
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Live Search Box */}
             <div className="relative flex-1">
@@ -379,10 +431,14 @@ export const TemplateModal: React.FC<TemplateModalProps> = ({
               </span>
             </div>
           )}
-        </div>
+          </div>
+        )}
 
         {/* Template Grid */}
-        <div className="p-3 sm:p-5 overflow-y-auto flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-4 gap-3 auto-rows-max content-start bg-slate-50/40">
+        <div
+          data-testid="paintbook-template-grid"
+          className="p-3 sm:p-5 overflow-y-auto flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 auto-rows-max content-start bg-slate-50/40"
+        >
           {/* Expanded Individual Outline Photo Stencils (When category or difficulty is filtered) */}
           {shouldExpandLevels &&
             expandedTemplates.map((template) => {

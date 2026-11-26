@@ -33,6 +33,7 @@ import {
   ShapeType,
   StampShape,
   Stroke,
+  SymmetryGuideMode,
   ToolType,
 } from '../types';
 import {
@@ -54,6 +55,7 @@ import {
   preloadStrokeRasterImage,
 } from '../utils/drawing';
 import { getBlurBrushStrokeWidth } from '../utils/blur';
+import { clampBucketTolerance, DEFAULT_BUCKET_TOLERANCE } from '../utils/floodFill';
 import {
   createInitialLayers,
   groupStrokesByLayer,
@@ -75,6 +77,10 @@ import {
   getLayerFilterSpec,
   LayerFilterOptions,
 } from '../utils/filters';
+import {
+  hasHorizontalSymmetryGuide,
+  hasVerticalSymmetryGuide,
+} from '../utils/symmetryGuides';
 
 export interface CanvasStudioHandle {
   cutSelection: () => void;
@@ -84,7 +90,6 @@ export interface CanvasStudioHandle {
   clearSelection: () => void;
   deleteSelection: () => void;
   cropToSelection: () => void;
-  rotateOrFlip: (action: 'cw90' | 'ccw90' | '180' | 'flipH' | 'flipV') => void;
   flipHorizontal: () => void;
   flipVertical: () => void;
   toggleMirrorAxis: (axis: 'horizontal' | 'vertical') => void;
@@ -110,6 +115,7 @@ interface CanvasStudioProps {
   secondaryColor?: string;
   size: number;
   stabilization?: number;
+  bucketTolerance?: number;
   pressureSensitive?: boolean;
   opacity: number;
   isGradientBrush?: boolean;
@@ -134,6 +140,7 @@ interface CanvasStudioProps {
   showRulers?: boolean;
   mirrorMode?: MirrorMode;
   onMirrorModeChange?: (mode: MirrorMode) => void;
+  symmetryGuides?: SymmetryGuideMode;
   onCanvasStrokeStart?: () => void;
   canvasDimensions: { width: number; height: number };
   onCanvasDimensionsChange: (dims: { width: number; height: number }) => void;
@@ -158,6 +165,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       secondaryColor = '#FFFFFF',
       size,
       stabilization = 45,
+      bucketTolerance = DEFAULT_BUCKET_TOLERANCE,
       pressureSensitive = true,
       opacity,
       isGradientBrush = false,
@@ -181,6 +189,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       showRulers = false,
       mirrorMode: mirrorModeProp,
       onMirrorModeChange,
+      symmetryGuides = 'none',
       onCanvasStrokeStart,
       canvasDimensions,
       onCanvasDimensionsChange,
@@ -987,7 +996,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
       ]
     );
 
-    // Imperative Clipboard, Selection, Crop, Rotate/Flip actions called by PaintRibbon
+    // Imperative Clipboard, Selection, Crop, and Flip actions called by PaintRibbon
     useImperativeHandle(
       ref,
       () => ({
@@ -1162,91 +1171,6 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           onStrokesChange([cropOp]);
           setSelectionRect(null);
           onNotify?.(`Cropped canvas to ${nextW}×${nextH}px`);
-        },
-        rotateOrFlip: (action) => {
-          const targetRect =
-            selectionRect && selectionRect.width >= 4 && selectionRect.height >= 4
-              ? selectionRect
-              : { x: 0, y: 0, width: canvasDimensions.width, height: canvasDimensions.height };
-          const srcUrl = captureCompositeRegion(targetRect);
-          if (!srcUrl) return;
-
-          const img = new Image();
-          img.onload = () => {
-            const swapDims = action === 'cw90' || action === 'ccw90';
-            const outW = swapDims ? img.height : img.width;
-            const outH = swapDims ? img.width : img.height;
-            const tmp = document.createElement('canvas');
-            tmp.width = outW;
-            tmp.height = outH;
-            const tctx = tmp.getContext('2d');
-            if (!tctx) return;
-
-            tctx.save();
-            tctx.translate(outW / 2, outH / 2);
-            if (action === 'cw90') tctx.rotate(Math.PI / 2);
-            else if (action === 'ccw90') tctx.rotate(-Math.PI / 2);
-            else if (action === '180') tctx.rotate(Math.PI);
-            else if (action === 'flipH') tctx.scale(-1, 1);
-            else if (action === 'flipV') tctx.scale(1, -1);
-            tctx.drawImage(img, -img.width / 2, -img.height / 2);
-            tctx.restore();
-
-            const transformedUrl = tmp.toDataURL('image/png');
-            preloadStrokeRasterImage(transformedUrl, () => rebuildBaseComposite());
-
-            if (selectionRect && selectionRect.width >= 4 && selectionRect.height >= 4) {
-              const eraseOld: Stroke = {
-                id: `op_rot_clr_${Date.now()}`,
-                tool: 'eraser',
-                color: secondaryColor,
-                fillColor: secondaryColor,
-                size: 1,
-                opacity: 1,
-                points: [],
-                operation: 'erase-rect',
-                rect: { ...targetRect },
-              };
-              const nextRect: RectBounds = {
-                x: targetRect.x,
-                y: targetRect.y,
-                width: outW,
-                height: outH,
-              };
-              const pasteTransformed: Stroke = {
-                id: `op_rot_pst_${Date.now()}`,
-                tool: 'select',
-                color: '#000000',
-                size: 1,
-                opacity: 1,
-                points: [],
-                operation: 'paste-image',
-                rect: nextRect,
-                rasterDataUrl: transformedUrl,
-              };
-              onStrokesChange([...strokes, eraseOld, pasteTransformed]);
-              setSelectionRect(nextRect);
-            } else {
-              if (swapDims) {
-                onManualCanvasResize?.();
-                onCanvasDimensionsChange({ width: outW, height: outH });
-              }
-              const replaceWhole: Stroke = {
-                id: `op_rot_full_${Date.now()}`,
-                layerId: effectiveActiveLayerId,
-                tool: 'select',
-                color: '#000000',
-                size: 1,
-                opacity: 1,
-                points: [],
-                operation: 'replace-bitmap',
-                rect: { x: 0, y: 0, width: outW, height: outH },
-                rasterDataUrl: transformedUrl,
-              };
-              onStrokesChange([replaceWhole]);
-            }
-          };
-          img.src = srcUrl;
         },
         flipHorizontal: () => {
           const { strokes: flipped, requiresRasterFallback } = flipCanvasStrokes(
@@ -1785,6 +1709,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
             colorEnd || undefined,
             paintFinish
           ),
+          tolerance: clampBucketTolerance(bucketTolerance),
           layerId: effectiveActiveLayerId,
         };
         const fillStrokes = createMirroredStrokes(
@@ -2819,6 +2744,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                 data-gradient-brush={isGradientBrush ? 'true' : 'false'}
                 data-pressure-sensitive={pressureSensitive ? 'true' : 'false'}
                 data-mirror-mode={symmetryMode}
+                data-symmetry-guides={symmetryGuides}
                 width={canvasDimensions.width}
                 height={canvasDimensions.height}
                 onPointerDown={handlePointerDown}
@@ -2888,6 +2814,34 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
                       style={{ top: `${gy * zoomLevel}px` }}
                     />
                   ))}
+                </div>
+              )}
+
+              {/* Center Symmetry Alignment Guides Overlay (non-mirroring) */}
+              {symmetryGuides !== 'none' && (
+                <div
+                  data-testid="symmetry-guides-overlay"
+                  aria-hidden="true"
+                  className="absolute inset-0 pointer-events-none z-20"
+                >
+                  {hasVerticalSymmetryGuide(symmetryGuides) && (
+                    <div
+                      data-testid="symmetry-guide-vertical-line"
+                      className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0 border-l-2 border-dashed border-[#0D9488]/75 shadow-[0_0_0_1px_rgba(255,255,255,0.55)]"
+                    />
+                  )}
+                  {hasHorizontalSymmetryGuide(symmetryGuides) && (
+                    <div
+                      data-testid="symmetry-guide-horizontal-line"
+                      className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-0 border-t-2 border-dashed border-[#0D9488]/75 shadow-[0_0_0_1px_rgba(255,255,255,0.55)]"
+                    />
+                  )}
+                  {symmetryGuides === 'both' && (
+                    <div
+                      data-testid="symmetry-guide-center-mark"
+                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white/90 border-2 border-[#0D9488]"
+                    />
+                  )}
                 </div>
               )}
 

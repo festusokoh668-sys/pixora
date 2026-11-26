@@ -1,0 +1,169 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUser(data, userId) {
+      return data.keys().hasAll(['id', 'email']) &&
+             data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt']) &&
+             data.id is string &&
+             data.id == userId &&
+             data.id == request.auth.uid &&
+             data.id.size() <= 128 &&
+             data.email is string &&
+             data.email.size() <= 256 &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 200)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2048)) &&
+             (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidArtwork(data, userId, artworkId) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'canvasWidth', 'canvasHeight', 'totalChunks', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly([
+               'id',
+               'userId',
+               'title',
+               'description',
+               'canvasWidth',
+               'canvasHeight',
+               'strokesCount',
+               'templateId',
+               'templateName',
+               'difficulty',
+               'isCustomTemplate',
+               'syncStatus',
+               'formatVersion',
+               'totalChunks',
+               'totalBytes',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             data.id is string &&
+             data.id == artworkId &&
+             data.id.size() <= 128 &&
+             data.userId is string &&
+             data.userId == userId &&
+             data.userId == request.auth.uid &&
+             data.userId.size() <= 128 &&
+             data.title is string &&
+             data.title.size() > 0 &&
+             data.title.size() <= 200 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+             data.canvasWidth is number &&
+             data.canvasWidth > 0 &&
+             data.canvasHeight is number &&
+             data.canvasHeight > 0 &&
+             (!('strokesCount' in data) || (data.strokesCount is number && data.strokesCount >= 0)) &&
+             (!('templateId' in data) || (data.templateId is string && data.templateId.size() <= 128)) &&
+             (!('templateName' in data) || (data.templateName is string && data.templateName.size() <= 200)) &&
+             (!('difficulty' in data) || (data.difficulty is string && data.difficulty.size() <= 64)) &&
+             (!('isCustomTemplate' in data) || data.isCustomTemplate is bool) &&
+             (!('syncStatus' in data) || (data.syncStatus is string && data.syncStatus.size() <= 32)) &&
+             (!('formatVersion' in data) || data.formatVersion is number) &&
+             data.totalChunks is number &&
+             data.totalChunks >= 1 &&
+             (!('totalBytes' in data) || (data.totalBytes is number && data.totalBytes >= 0)) &&
+             data.createdAt is string &&
+             data.createdAt.size() > 0 &&
+             data.createdAt.size() <= 64 &&
+             data.updatedAt is string &&
+             data.updatedAt.size() > 0 &&
+             data.updatedAt.size() <= 64;
+    }
+
+    function isValidChunk(data) {
+      return data.keys().hasAll(['chunkIndex', 'totalChunks', 'data', 'updatedAt']) &&
+             data.keys().hasOnly(['chunkIndex', 'totalChunks', 'data', 'updatedAt']) &&
+             data.chunkIndex is number &&
+             data.chunkIndex >= 0 &&
+             data.totalChunks is number &&
+             data.totalChunks >= 1 &&
+             data.data is string &&
+             data.data.size() <= 400000 &&
+             data.updatedAt is string &&
+             data.updatedAt.size() <= 64;
+    }
+
+    // User profile documents: strictly owner only
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId);
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUser(incoming(), userId) &&
+                       incoming().id == existing().id;
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Artworks subcollection: strictly authenticated owner only
+      match /artworks/{artworkId} {
+        allow get: if isOwner(userId) && isValidId(artworkId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(artworkId) &&
+                         isValidArtwork(incoming(), userId, artworkId);
+        allow update: if isOwner(userId) &&
+                         isValidId(artworkId) &&
+                         isValidArtwork(incoming(), userId, artworkId) &&
+                         incoming().id == existing().id &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'title',
+                             'description',
+                             'canvasWidth',
+                             'canvasHeight',
+                             'strokesCount',
+                             'templateId',
+                             'templateName',
+                             'difficulty',
+                             'isCustomTemplate',
+                             'syncStatus',
+                             'formatVersion',
+                             'totalChunks',
+                             'totalBytes',
+                             'updatedAt'
+                           ]) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'updatedAt'])
+                         );
+        allow delete: if isOwner(userId) && isValidId(artworkId);
+
+        // Project serialized chunks: strictly authenticated owner only
+        match /projectChunks/{chunkId} {
+          allow get: if isOwner(userId) && isValidId(artworkId) && isValidId(chunkId);
+          allow list: if isOwner(userId) && isValidId(artworkId);
+          allow create, update: if isOwner(userId) &&
+                                   isValidId(artworkId) &&
+                                   isValidId(chunkId) &&
+                                   isValidChunk(incoming());
+          allow delete: if isOwner(userId) && isValidId(artworkId) && isValidId(chunkId);
+        }
+      }
+    }
+  }
+}

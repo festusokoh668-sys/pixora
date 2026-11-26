@@ -3,6 +3,24 @@
  * Used by the Paint Bucket tool to fill enclosed shapes (e.g. drawn circles, outlines).
  */
 
+export const MIN_BUCKET_TOLERANCE = 0;
+export const MAX_BUCKET_TOLERANCE = 255;
+export const DEFAULT_BUCKET_TOLERANCE = 38;
+
+export function clampBucketTolerance(tolerance: number): number {
+  if (!Number.isFinite(tolerance)) return DEFAULT_BUCKET_TOLERANCE;
+  return Math.max(MIN_BUCKET_TOLERANCE, Math.min(MAX_BUCKET_TOLERANCE, Math.round(tolerance)));
+}
+
+export function getBucketToleranceLabel(tolerance: number): string {
+  const value = clampBucketTolerance(tolerance);
+  if (value === 0) return 'Exact';
+  if (value <= 25) return 'Tight';
+  if (value <= 65) return 'Balanced';
+  if (value <= 140) return 'Wide';
+  return 'Maximum';
+}
+
 export function hexToUint32(hex: string, alpha: number = 1): number {
   let clean = hex.replace('#', '').trim();
   if (clean.length === 3) {
@@ -45,7 +63,7 @@ export function colorsMatch(c1: number, c2: number, tolerance: number): boolean 
 /**
  * Executes a scanline flood fill on a canvas rendering context.
  * Replaces all contiguous pixels matching the target color at (startX, startY)
- * with the designated fillColorHex.
+ * within the specified color tolerance with the designated fillColorHex.
  */
 export function floodFill(
   ctx: CanvasRenderingContext2D,
@@ -53,7 +71,7 @@ export function floodFill(
   startY: number,
   fillColorHex: string,
   opacity: number = 1.0,
-  tolerance: number = 38
+  tolerance: number = DEFAULT_BUCKET_TOLERANCE
 ): boolean {
   const x0 = Math.floor(startX);
   const y0 = Math.floor(startY);
@@ -64,6 +82,7 @@ export function floodFill(
     return false;
   }
 
+  const effectiveTolerance = clampBucketTolerance(tolerance);
   const imgData = ctx.getImageData(0, 0, width, height);
   const data = new Uint32Array(imgData.data.buffer);
 
@@ -71,8 +90,11 @@ export function floodFill(
   const targetColor = data[startIndex];
   const fillColor = hexToUint32(fillColorHex, opacity);
 
-  // If already matches within minimal tolerance, no fill needed
-  if (colorsMatch(targetColor, fillColor, 3)) {
+  // If pixel already matches fill color (exact at tolerance 0, or near-exact otherwise), skip redundant fill
+  if (
+    targetColor === fillColor ||
+    (effectiveTolerance > 0 && colorsMatch(targetColor, fillColor, Math.min(2, effectiveTolerance)))
+  ) {
     return false;
   }
 
@@ -94,7 +116,7 @@ export function floodFill(
     while (
       leftX > 0 &&
       !visited[lineOffset + leftX - 1] &&
-      colorsMatch(data[lineOffset + leftX - 1], targetColor, tolerance)
+      colorsMatch(data[lineOffset + leftX - 1], targetColor, effectiveTolerance)
     ) {
       leftX--;
     }
@@ -104,7 +126,7 @@ export function floodFill(
     while (
       rightX < width - 1 &&
       !visited[lineOffset + rightX + 1] &&
-      colorsMatch(data[lineOffset + rightX + 1], targetColor, tolerance)
+      colorsMatch(data[lineOffset + rightX + 1], targetColor, effectiveTolerance)
     ) {
       rightX++;
     }
@@ -125,7 +147,7 @@ export function floodFill(
       for (let x = leftX; x <= rightX; x++) {
         const cIdx = checkOffset + x;
         const matches =
-          !visited[cIdx] && colorsMatch(data[cIdx], targetColor, tolerance);
+          !visited[cIdx] && colorsMatch(data[cIdx], targetColor, effectiveTolerance);
 
         if (!inSegment && matches) {
           stack.push(x, checkY);

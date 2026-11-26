@@ -1,24 +1,46 @@
 import React from 'react';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Moon, Sun } from 'lucide-react';
+import { ThemeMode, getThemeToggleIcon } from '../utils/theme';
 
 interface WelcomeScreenProps {
   onStartCreating: () => void;
+  themeMode?: ThemeMode;
+  onToggleTheme?: () => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   onStartCreating,
+  themeMode = 'light',
+  onToggleTheme,
 }) => {
+  const isDark = themeMode === 'dark';
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-blue-50/80 to-blue-200/50 text-slate-900 flex flex-col justify-between relative overflow-hidden select-none">
+    <div
+      data-theme={themeMode}
+      className={`min-h-screen flex flex-col justify-between relative overflow-hidden select-none transition-colors ${
+        isDark
+          ? 'bg-gradient-to-br from-[#0B0F17] via-[#111827] to-[#172033] text-slate-100'
+          : 'bg-gradient-to-br from-white via-blue-50/80 to-blue-200/50 text-slate-900'
+      }`}
+    >
       {/* Background Imagery */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true">
         <img
           src="/src/assets/images/royal_blue_white_bg_1793729884932.jpg"
           alt=""
-          className="w-full h-full object-cover object-center opacity-40 scale-105 filter blur-[1px]"
+          className={`w-full h-full object-cover object-center scale-105 filter blur-[1px] ${
+            isDark ? 'opacity-15' : 'opacity-40'
+          }`}
         />
         {/* Soft luminous radial and linear gradient overlays */}
-        <div className="absolute inset-0 bg-gradient-to-b from-white/80 via-blue-50/60 to-white/90" />
+        <div
+          className={`absolute inset-0 ${
+            isDark
+              ? 'bg-gradient-to-b from-[#0B0F17]/85 via-[#111827]/75 to-[#0B0F17]/95'
+              : 'bg-gradient-to-b from-white/80 via-blue-50/60 to-white/90'
+          }`}
+        />
         <div className="absolute top-[-10%] left-[-10%] w-[550px] h-[550px] rounded-full bg-blue-600/20 blur-[130px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full bg-[#164BCE]/25 blur-[140px]" />
       </div>
@@ -30,29 +52,72 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#0F3AA8] via-[#164BCE] to-[#3B82F6] flex items-center justify-center shadow-lg shadow-blue-600/30 border border-blue-300/40">
             <span className="text-white font-black text-xl tracking-tighter">P</span>
           </div>
-          <span className="font-black text-2xl sm:text-3xl tracking-wider uppercase text-slate-950 font-sans">
-            PIX<span className="text-[#164BCE]">ORA</span>
+          <span
+            className={`font-black text-2xl sm:text-3xl tracking-wider uppercase font-sans ${
+              isDark ? 'text-white' : 'text-slate-950'
+            }`}
+          >
+            PIX<span className={isDark ? 'text-blue-400' : 'text-[#164BCE]'}>ORA</span>
           </span>
         </div>
 
-        <button
-          onClick={onStartCreating}
-          className="px-4 py-2 rounded-xl bg-white/90 backdrop-blur-md border border-blue-200/80 hover:border-blue-400 text-xs sm:text-sm font-bold text-blue-700 shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer"
-        >
-          Open Studio
-        </button>
+        <div className="flex items-center gap-2.5">
+          {onToggleTheme && (
+            <button
+              type="button"
+              data-testid="welcome-theme-toggle-btn"
+              data-theme-icon={getThemeToggleIcon(themeMode)}
+              aria-pressed={isDark}
+              aria-label={getThemeToggleIcon(themeMode) === 'moon' ? 'Moon' : 'Sun'}
+              onClick={onToggleTheme}
+              className={`w-9 h-9 rounded-xl backdrop-blur-md border flex items-center justify-center shadow-sm transition-all active:scale-95 cursor-pointer ${
+                isDark
+                  ? 'bg-slate-800/90 border-slate-700 hover:border-amber-400/60 text-amber-400'
+                  : 'bg-white/90 border-blue-200/80 hover:border-blue-400 text-slate-700'
+              }`}
+            >
+              {getThemeToggleIcon(themeMode) === 'moon' ? (
+                <Moon className="w-4 h-4" aria-hidden="true" />
+              ) : (
+                <Sun className="w-4 h-4" aria-hidden="true" />
+              )}
+            </button>
+          )}
+          <button
+            onClick={onStartCreating}
+            className={`px-4 py-2 rounded-xl backdrop-blur-md border text-xs sm:text-sm font-bold shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer ${
+              isDark
+                ? 'bg-slate-800/90 border-slate-700 hover:border-blue-400 text-blue-300'
+                : 'bg-white/90 border-blue-200/80 hover:border-blue-400 text-blue-700'
+            }`}
+          >
+            Open Studio
+          </button>
+        </div>
       </nav>
 
       {/* Main Hero & Welcome Content */}
       <main className="w-full max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-20 flex flex-col items-center text-center z-10 my-auto">
-        <h1 className="font-black text-6xl sm:text-8xl md:text-9xl uppercase tracking-tight text-slate-950 drop-shadow-[0_4px_30px_rgba(22,75,206,0.18)] mb-3 font-sans">
-          PIX<span className="text-[#164BCE]">ORA</span>
+        <h1
+          className={`font-black text-6xl sm:text-8xl md:text-9xl uppercase tracking-tight drop-shadow-[0_4px_30px_rgba(22,75,206,0.18)] mb-3 font-sans ${
+            isDark ? 'text-white' : 'text-slate-950'
+          }`}
+        >
+          PIX<span className={isDark ? 'text-blue-400' : 'text-[#164BCE]'}>ORA</span>
         </h1>
 
-        <h2 className="text-xl sm:text-3xl md:text-4xl font-extrabold text-slate-800 tracking-tight mb-3">
+        <h2
+          className={`text-xl sm:text-3xl md:text-4xl font-extrabold tracking-tight mb-3 ${
+            isDark ? 'text-slate-100' : 'text-slate-800'
+          }`}
+        >
           Your Imagination. Your Canvas.
         </h2>
-        <p className="max-w-xl text-slate-600 text-sm sm:text-base font-medium leading-relaxed mb-8">
+        <p
+          className={`max-w-xl text-sm sm:text-base font-medium leading-relaxed mb-8 ${
+            isDark ? 'text-slate-300' : 'text-slate-600'
+          }`}
+        >
           Relax, draw, trace and bring your imagination to life with precision drawing tools and real paint books.
         </p>
 
@@ -67,15 +132,25 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             </span>
             <ArrowRight className="w-5 h-5 text-white relative z-10 group-hover:translate-x-1.5 transition-transform shrink-0" />
           </button>
-          <span className="text-[11px] font-semibold text-slate-500">
+          <span
+            className={`text-[11px] font-semibold ${
+              isDark ? 'text-slate-400' : 'text-slate-500'
+            }`}
+          >
             Instant freehand canvas · Real Paint Books · Smooth stroke stabilization
           </span>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="w-full py-4 px-6 z-10 text-center text-xs font-semibold text-slate-500 flex flex-col sm:flex-row items-center justify-center gap-2">
-        <span className="font-bold text-slate-700">PIXORA Studio © 2026</span>
+      <footer
+        className={`w-full py-4 px-6 z-10 text-center text-xs font-semibold flex flex-col sm:flex-row items-center justify-center gap-2 ${
+          isDark ? 'text-slate-400' : 'text-slate-500'
+        }`}
+      >
+        <span className={`font-bold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+          PIXORA Studio © 2026
+        </span>
         <span className="hidden sm:inline text-slate-400">•</span>
         <span>Mobile-First Creative Canvas</span>
       </footer>

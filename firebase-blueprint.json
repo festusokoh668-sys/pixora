@@ -1,0 +1,153 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "User profile photo URL"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of account creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "email"]
+    },
+    "ArtworkMetadata": {
+      "title": "ArtworkMetadata",
+      "description": "Saved artwork metadata stored under user's private subcollection without large binary assets",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique artwork ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of owner"
+        },
+        "title": {
+          "type": "string",
+          "description": "Artwork title",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional artwork description",
+          "maxLength": 1000
+        },
+        "canvasWidth": {
+          "type": "number",
+          "description": "Canvas width in pixels"
+        },
+        "canvasHeight": {
+          "type": "number",
+          "description": "Canvas height in pixels"
+        },
+        "strokesCount": {
+          "type": "number",
+          "description": "Total number of strokes in the artwork"
+        },
+        "templateId": {
+          "type": "string",
+          "description": "ID of tracing template if applicable"
+        },
+        "templateName": {
+          "type": "string",
+          "description": "Name of tracing template if applicable"
+        },
+        "difficulty": {
+          "type": "string",
+          "description": "Difficulty level if applicable"
+        },
+        "isCustomTemplate": {
+          "type": "boolean",
+          "description": "Whether drawing references a custom uploaded photo"
+        },
+        "syncStatus": {
+          "type": "string",
+          "description": "Cloud synchronization status"
+        },
+        "formatVersion": {
+          "type": "number",
+          "description": "Serialization format version"
+        },
+        "totalChunks": {
+          "type": "number",
+          "description": "Total number of project chunk documents in projectChunks subcollection"
+        },
+        "totalBytes": {
+          "type": "number",
+          "description": "Total uncompressed character size of serialized project data"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp when last updated"
+        }
+      },
+      "required": ["id", "userId", "title", "canvasWidth", "canvasHeight", "totalChunks", "createdAt", "updatedAt"]
+    },
+    "ProjectChunk": {
+      "title": "ProjectChunk",
+      "description": "Segment of serialized drawing stroke and layer reconstruction data (safe chunks <= 300 KiB)",
+      "type": "object",
+      "properties": {
+        "chunkIndex": {
+          "type": "number",
+          "description": "0-based sequence index of the chunk"
+        },
+        "totalChunks": {
+          "type": "number",
+          "description": "Total count of chunks for the project"
+        },
+        "data": {
+          "type": "string",
+          "description": "JSON slice containing serialized strokes and layers"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp when chunk was saved"
+        }
+      },
+      "required": ["chunkIndex", "totalChunks", "data", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection"
+    },
+    "/users/{userId}/artworks/{artworkId}": {
+      "schema": "ArtworkMetadata",
+      "description": "Private artwork metadata collection owned by the authenticated user"
+    },
+    "/users/{userId}/artworks/{artworkId}/projectChunks/{chunkId}": {
+      "schema": "ProjectChunk",
+      "description": "Subcollection of chunked drawing and layer serialization data"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import { Point, Stroke, ToolType, PaintFinish, MirrorMode, StampShape } from '../types';
-import { floodFill } from './floodFill';
+import { DEFAULT_BUCKET_TOLERANCE, floodFill } from './floodFill';
 import {
   buildMultiStopGradientColors,
   hexToHsl,
@@ -1477,7 +1477,14 @@ export function renderStrokeToContext(
   if (stroke.tool === 'bucket') {
     const pt = stroke.points[0];
     if (pt) {
-      floodFill(ctx, pt.x, pt.y, stroke.color, stroke.opacity);
+      floodFill(
+        ctx,
+        pt.x,
+        pt.y,
+        stroke.color,
+        stroke.opacity,
+        stroke.tolerance ?? DEFAULT_BUCKET_TOLERANCE
+      );
     }
     return;
   }

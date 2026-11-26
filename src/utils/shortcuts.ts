@@ -14,9 +14,6 @@ export type ShortcutAction =
   | 'clear-selection'
   | 'crop'
   | 'resize'
-  | 'rotate-cw'
-  | 'rotate-ccw'
-  | 'rotate-180'
   | 'flip-horizontal'
   | 'flip-vertical'
   | 'filter-invert'
@@ -36,7 +33,8 @@ export type ShortcutAction =
   | 'tool-text'
   | 'tool-picker'
   | 'tool-magnifier'
-  | 'tool-select';
+  | 'tool-select'
+  | 'share';
 
 export interface ShortcutKeyEvent {
   key: string;
@@ -54,8 +52,6 @@ export interface ShortcutDescriptor {
 
 export const KEYBOARD_SHORTCUTS: ShortcutDescriptor[] = [
   // Canvas & Image
-  { keys: 'Ctrl+R', label: 'Rotate right 90°', category: 'Canvas & Image' },
-  { keys: 'Ctrl+Shift+R', label: 'Rotate left 90°', category: 'Canvas & Image' },
   { keys: 'Ctrl+F', label: 'Flip horizontal', category: 'Canvas & Image' },
   { keys: 'Ctrl+Shift+F', label: 'Flip vertical', category: 'Canvas & Image' },
   { keys: 'Ctrl+Shift+X', label: 'Crop to selection', category: 'Canvas & Image' },
@@ -86,6 +82,7 @@ export const KEYBOARD_SHORTCUTS: ShortcutDescriptor[] = [
   // File & View
   { keys: 'Ctrl+S', label: 'Save / Export artwork', category: 'File & View' },
   { keys: 'Ctrl+Shift+S', label: 'Quick Save PNG to downloads', category: 'File & View' },
+  { keys: 'Ctrl+Shift+H', label: 'Share canvas or session link', category: 'File & View' },
   { keys: 'Ctrl+O', label: 'Open Paint Book', category: 'File & View' },
   { keys: 'Ctrl+P', label: 'Print artwork', category: 'File & View' },
   { keys: 'Ctrl+G', label: 'Toggle gridlines', category: 'File & View' },
@@ -133,8 +130,8 @@ export function resolveKeyboardShortcut(
     // Shift+Ctrl combinations first (higher specificity)
     if (shift && key === 'z') return 'redo';
     if (shift && key === 's') return 'quick-save';
+    if (shift && key === 'h') return 'share';
     if (shift && key === 'x') return 'crop';
-    if (shift && key === 'r') return 'rotate-ccw';
     if (shift && key === 'f') return 'flip-vertical';
 
     // Standard Ctrl combinations
@@ -147,7 +144,6 @@ export function resolveKeyboardShortcut(
     if (key === 'x') return 'cut';
     if (key === 'v') return 'paste';
     if (key === 'a') return 'select-all';
-    if (key === 'r') return 'rotate-cw';
     if (key === 'f') return 'flip-horizontal';
     if (key === 'e') return 'resize';
     if (key === 'i') return 'filter-invert';

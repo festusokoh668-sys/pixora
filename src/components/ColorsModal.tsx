@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Pipette, Shuffle, Sun, Moon, Clock, Palette } from 'lucide-react';
+import { X, Pipette, Shuffle, Sun, Moon, Clock, Palette, ImagePlus, Upload, Sparkles, Check, Trash2 } from 'lucide-react';
 import {
   hexToRgb,
   rgbToHex,
@@ -11,6 +11,14 @@ import {
   recordRecentColor,
   resolveTargetColor,
 } from '../utils/color';
+import {
+  DEFAULT_EXTRACTED_PALETTE_SIZE,
+  ExtractedPaletteSwatch,
+  MAX_CUSTOM_COLORS,
+  SampledImagePixels,
+  extractColorPaletteFromPixels,
+  samplePixelsFromImageElement,
+} from '../utils/paletteExtraction';
 import {
   COLOR_SWATCHES,
   CLASSIC_PAINT_BOX,
@@ -29,7 +37,10 @@ interface ColorsModalProps {
   onColorChange: (hex: string) => void;
   secondaryColor?: string;
   onSecondaryColorChange?: (hex: string) => void;
+  customColors?: string[];
   onAddCustomColor?: (hex: string) => void;
+  onAddCustomColors?: (hexes: string[]) => void;
+  onClearCustomColors?: () => void;
   recentColors?: string[];
   onCommitRecentColor?: (hex: string) => void;
   themeMode?: 'bright' | 'dark';
@@ -43,14 +54,25 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
   onColorChange,
   secondaryColor,
   onSecondaryColorChange,
+  customColors = [],
   onAddCustomColor,
+  onAddCustomColors,
+  onClearCustomColors,
   recentColors: recentColorsProp,
   onCommitRecentColor,
   themeMode,
   onToggleTheme,
 }) => {
-  const [activeTab, setActiveTab] = useState<'spectrum' | 'sliders' | 'palettes'>('spectrum');
+  const [activeTab, setActiveTab] = useState<'spectrum' | 'sliders' | 'palettes' | 'image'>('spectrum');
   const [activeTarget, setActiveTarget] = useState<ColorTarget>('primary');
+  const [paletteMaxColors, setPaletteMaxColors] = useState<number>(DEFAULT_EXTRACTED_PALETTE_SIZE);
+  const [referenceImageName, setReferenceImageName] = useState<string>('');
+  const [referencePreviewUrl, setReferencePreviewUrl] = useState<string | null>(null);
+  const [sampledPixels, setSampledPixels] = useState<SampledImagePixels | null>(null);
+  const [extractedPalette, setExtractedPalette] = useState<ExtractedPaletteSwatch[]>([]);
+  const [imageExtractError, setImageExtractError] = useState<string | null>(null);
+  const [paletteAddedBanner, setPaletteAddedBanner] = useState<string | null>(null);
+  const paletteFileInputRef = useRef<HTMLInputElement>(null);
   const effectiveSecondaryColor = secondaryColor ?? '#FFFFFF';
   const activeColor = resolveTargetColor(activeTarget, currentColor, effectiveSecondaryColor);
 
@@ -233,6 +255,78 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
     }
   };
 
+  const handleExtractFromLoadedFile = (file: File) => {
+    setImageExtractError(null);
+    setPaletteAddedBanner(null);
+
+    if (!file || (file.type && !file.type.startsWith('image/'))) {
+      setImageExtractError('Please choose a valid image file (PNG, JPG, WebP, GIF, or SVG).');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : null;
+      if (!dataUrl) {
+        setImageExtractError('Could not read the uploaded image.');
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        const sampled = samplePixelsFromImageElement(img, 160);
+        if (!sampled) {
+          setImageExtractError('Could not sample pixels from this image.');
+          return;
+        }
+        const extracted = extractColorPaletteFromPixels(sampled.data, sampled.width, sampled.height, {
+          maxColors: paletteMaxColors,
+        });
+        if (extracted.length === 0) {
+          setImageExtractError('No visible opaque colors found in the uploaded image.');
+          return;
+        }
+        setReferenceImageName(file.name);
+        setReferencePreviewUrl(dataUrl);
+        setSampledPixels(sampled);
+        setExtractedPalette(extracted);
+        setActiveTab('image');
+      };
+      img.onerror = () => {
+        setImageExtractError('Failed to decode the uploaded reference image.');
+      };
+      img.src = dataUrl;
+    };
+    reader.onerror = () => {
+      setImageExtractError('Failed to read the uploaded file.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePaletteCountChange = (count: number) => {
+    setPaletteMaxColors(count);
+    setPaletteAddedBanner(null);
+    if (sampledPixels) {
+      const next = extractColorPaletteFromPixels(sampledPixels.data, sampledPixels.width, sampledPixels.height, {
+        maxColors: count,
+      });
+      setExtractedPalette(next);
+    }
+  };
+
+  const handleAddExtractedPaletteToCustomColors = () => {
+    if (extractedPalette.length === 0) return;
+    const hexes = extractedPalette.map((s) => s.hex);
+    if (onAddCustomColors) {
+      onAddCustomColors(hexes);
+    } else if (onAddCustomColor) {
+      [...hexes].reverse().forEach((hex) => onAddCustomColor(hex));
+    }
+    commitTargetColor(hexes[0]);
+    commitRecentColor(hexes[0]);
+    setPaletteAddedBanner(`Added ${hexes.length} colors to Custom Colors!`);
+  };
+
   const flourishPalette = [
     '#F43F5E', '#FB7185', '#FDA4AF', '#F472B6', '#E879F9', '#C084FC',
     '#818CF8', '#60A5FA', '#38BDF8', '#2DD4BF', '#34D399', '#A3E635',
@@ -261,6 +355,20 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
           type="color"
           value={activeColor.startsWith('#') && activeColor.length === 7 ? activeColor : '#164BCE'}
           onChange={(e) => handlePickPreset(e.target.value)}
+          className="hidden"
+        />
+        <input
+          ref={paletteFileInputRef}
+          type="file"
+          accept="image/*"
+          data-testid="palette-image-upload-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              handleExtractFromLoadedFile(file);
+            }
+            e.target.value = '';
+          }}
           className="hidden"
         />
 
@@ -530,10 +638,155 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             </div>
           )}
 
-          {/* Precision HEX Input & Eyedropper Toolbar */}
-          <div className="w-full flex items-center justify-between gap-2 pt-2 border-t border-slate-800">
+          {activeTab === 'image' && (
+            <div data-testid="image-palette-generator" className="w-full flex flex-col gap-2.5">
+              {/* Upload / Drop Reference Image Box */}
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleExtractFromLoadedFile(file);
+                }}
+                className="w-full rounded-xl border border-dashed border-slate-700 bg-slate-950/75 p-2.5 flex items-center gap-3"
+              >
+                {referencePreviewUrl ? (
+                  <img
+                    src={referencePreviewUrl}
+                    alt={referenceImageName || 'Uploaded reference'}
+                    data-testid="palette-source-preview"
+                    className="w-16 h-12 object-cover rounded-lg border border-slate-700 shrink-0 bg-slate-900"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                    <ImagePlus className="w-5 h-5 text-blue-400" />
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                  <div className="text-[11px] font-bold text-slate-200 truncate">
+                    {referenceImageName || 'Generate Palette from Image'}
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-snug">
+                    {referencePreviewUrl
+                      ? `Extracted ${extractedPalette.length} distinct swatch${extractedPalette.length === 1 ? '' : 'es'}`
+                      : 'Upload or drop a reference image to sample its dominant colors'}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="upload-reference-image-btn"
+                  onClick={() => paletteFileInputRef.current?.click()}
+                  className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{referencePreviewUrl ? 'Replace' : 'Upload'}</span>
+                </button>
+              </div>
+
+              {/* Palette Size Controls */}
+              <div className="flex items-center justify-between gap-2 text-[10.5px]">
+                <span className="text-slate-400 font-semibold">Palette size:</span>
+                <div className="flex items-center gap-1">
+                  {[5, 8, 10].map((cnt) => (
+                    <button
+                      key={cnt}
+                      type="button"
+                      data-testid={`palette-size-${cnt}-btn`}
+                      onClick={() => handlePaletteCountChange(cnt)}
+                      className={`px-2 py-0.5 rounded-md border font-bold cursor-pointer ${
+                        paletteMaxColors === cnt
+                          ? 'bg-blue-600/30 border-blue-400 text-blue-200'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {cnt} Colors
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {imageExtractError && (
+                <div
+                  role="alert"
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-red-500/15 border border-red-500/40 text-red-300 text-[11px]"
+                >
+                  {imageExtractError}
+                </div>
+              )}
+
+              {/* Extracted Swatches Grid + Add to Custom Colors */}
+              {extractedPalette.length > 0 && (
+                <div className="w-full rounded-xl bg-slate-950/70 border border-slate-800 p-2 flex flex-col gap-2">
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {extractedPalette.map((sw, idx) => {
+                      const isActive = activeColor.toUpperCase() === sw.hex;
+                      return (
+                        <button
+                          key={sw.hex}
+                          type="button"
+                          data-testid={`extracted-palette-swatch-${idx}`}
+                          onClick={() => handlePickPreset(sw.hex, false)}
+                          onContextMenu={(e) => {
+                            if (!onSecondaryColorChange) return;
+                            e.preventDefault();
+                            handlePickPreset(sw.hex, false, 'secondary');
+                          }}
+                          className={`flex flex-col items-center p-1 rounded-lg border transition-transform active:scale-95 cursor-pointer ${
+                            isActive
+                              ? 'border-white bg-slate-800 ring-1 ring-blue-400'
+                              : 'border-slate-700/80 bg-slate-900 hover:border-slate-500'
+                          }`}
+                          title={`${sw.hex} (${sw.percentage}%) — Click to use color`}
+                          aria-label={`Extracted color ${sw.hex} (${sw.percentage}%)`}
+                        >
+                          <span
+                            className="w-full h-6 rounded border border-white/15 block"
+                            style={{ backgroundColor: sw.hex }}
+                          />
+                          <span className="text-[9px] font-mono text-slate-300 mt-0.5 leading-none">
+                            {sw.hex}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-0.5">
+                    {paletteAddedBanner ? (
+                      <span
+                        data-testid="palette-added-confirmation"
+                        className="text-[10.5px] font-semibold text-emerald-400 flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>{paletteAddedBanner}</span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400">
+                        Adds up to {MAX_CUSTOM_COLORS} swatches to Custom Colors
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      data-testid="add-palette-to-custom-btn"
+                      onClick={handleAddExtractedPaletteToCustomColors}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm active:scale-95"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Add Palette to Custom Colors</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Precision HEX Input, Image Palette Trigger & Eyedropper Toolbar */}
+          <div className="w-full flex items-center justify-between gap-1.5 pt-2 border-t border-slate-800">
             {/* Hex Input */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 flex-1">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 flex-1 min-w-0">
               <span className="text-slate-400 font-bold text-xs">HEX</span>
               <input
                 type="text"
@@ -541,14 +794,31 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 onChange={handleHexInputChange}
                 maxLength={7}
                 placeholder="#164BCE"
-                className="w-20 bg-transparent font-mono font-bold text-blue-400 uppercase text-xs focus:outline-none"
+                className="w-16 bg-transparent font-mono font-bold text-blue-400 uppercase text-xs focus:outline-none"
               />
             </div>
+
+            {/* Quick Image -> Palette Tab Trigger */}
+            <button
+              type="button"
+              data-testid="quick-image-palette-btn"
+              onClick={() => {
+                setActiveTab('image');
+                if (!referencePreviewUrl) {
+                  paletteFileInputRef.current?.click();
+                }
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 font-bold border border-emerald-500/40 cursor-pointer active:scale-95 transition-all text-xs shrink-0"
+              title="Generate Custom Colors palette from a reference image"
+            >
+              <ImagePlus className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Image</span>
+            </button>
 
             {/* Native Eyedropper Trigger */}
             <button
               onClick={handleTriggerEyedropper}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 cursor-pointer active:scale-95 transition-all text-xs"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold border border-blue-500/40 cursor-pointer active:scale-95 transition-all text-xs shrink-0"
               title="Pick exact color from screen"
             >
               <Pipette className="w-3.5 h-3.5 text-blue-300" />
@@ -561,8 +831,9 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                 const s = getRandomColor();
                 handlePickPreset(s.hex, true);
               }}
-              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer transition-colors"
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer transition-colors shrink-0"
               title="Random color"
+              aria-label="Random color"
             >
               <Shuffle className="w-4 h-4 text-blue-400" />
             </button>
@@ -607,6 +878,62 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
                       activeTarget === 'secondary' ? 'Secondary' : 'Primary'
                     }${onSecondaryColorChange ? ' • Right-click for Secondary' : ''}`}
                     aria-label={`${preset.name} (${preset.hex})`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Custom Colors Slots (Synced with Ribbon Custom Colors Row) */}
+          <div
+            data-testid="modal-custom-colors-section"
+            className="w-full rounded-xl bg-slate-950/70 border border-slate-800 px-2.5 py-2 flex flex-col gap-1.5"
+          >
+            <div className="flex items-center justify-between text-[10.5px] font-bold text-slate-300">
+              <span className="flex items-center gap-1.5 uppercase tracking-wider">
+                <Sparkles className="w-3 h-3 text-emerald-400" />
+                <span>Custom Colors</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <span data-testid="modal-custom-colors-count" className="font-mono text-[10px] text-slate-400">
+                  {customColors.length}/{MAX_CUSTOM_COLORS}
+                </span>
+                {customColors.length > 0 && onClearCustomColors && (
+                  <button
+                    type="button"
+                    data-testid="clear-custom-colors-btn"
+                    onClick={onClearCustomColors}
+                    className="text-[10px] text-slate-400 hover:text-red-300 flex items-center gap-0.5 cursor-pointer"
+                    title="Clear all Custom Colors"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Clear</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-10 gap-1">
+              {Array.from({ length: MAX_CUSTOM_COLORS }, (_, idx) => {
+                const hex = customColors[idx] || null;
+                const isActive = Boolean(hex && activeColor.toUpperCase() === hex.toUpperCase());
+                return (
+                  <button
+                    key={`modal_custom_${idx}`}
+                    type="button"
+                    data-testid={`modal-custom-color-${idx}`}
+                    disabled={!hex}
+                    onClick={() => hex && handlePickPreset(hex, false)}
+                    className={`h-6.5 w-full rounded-md border transition-transform ${
+                      hex
+                        ? isActive
+                          ? 'border-white scale-105 ring-2 ring-blue-400 z-10 cursor-pointer'
+                          : 'border-slate-700 hover:scale-105 hover:border-slate-400 cursor-pointer active:scale-90'
+                        : 'border-slate-800/80 bg-slate-900/60 cursor-default'
+                    }`}
+                    style={hex ? { backgroundColor: hex } : undefined}
+                    title={hex ? `Use custom color ${hex}` : 'Empty custom color slot'}
+                    aria-label={hex ? `Use custom color ${hex}` : 'Empty custom color slot'}
                   />
                 );
               })}
@@ -679,8 +1006,10 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="grid grid-cols-3 border-t border-slate-800 bg-slate-950 p-1 text-[11px] font-bold uppercase tracking-wider">
+        <div className="grid grid-cols-4 border-t border-slate-800 bg-slate-950 p-1 text-[10.5px] font-bold uppercase tracking-wider">
           <button
+            type="button"
+            data-testid="colors-tab-spectrum"
             onClick={() => setActiveTab('spectrum')}
             className={`py-2 rounded-xl transition-all cursor-pointer ${
               activeTab === 'spectrum' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
@@ -689,6 +1018,8 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             Spectrum
           </button>
           <button
+            type="button"
+            data-testid="colors-tab-sliders"
             onClick={() => setActiveTab('sliders')}
             className={`py-2 rounded-xl transition-all cursor-pointer ${
               activeTab === 'sliders' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
@@ -697,12 +1028,24 @@ export const ColorsModal: React.FC<ColorsModalProps> = ({
             RGB Sliders
           </button>
           <button
+            type="button"
+            data-testid="colors-tab-palettes"
             onClick={() => setActiveTab('palettes')}
             className={`py-2 rounded-xl transition-all cursor-pointer ${
               activeTab === 'palettes' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Palettes
+          </button>
+          <button
+            type="button"
+            data-testid="colors-tab-image"
+            onClick={() => setActiveTab('image')}
+            className={`py-2 rounded-xl transition-all cursor-pointer ${
+              activeTab === 'image' ? 'bg-slate-800 text-emerald-300 shadow-sm' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            From Image
           </button>
         </div>
       </div>

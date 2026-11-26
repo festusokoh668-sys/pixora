@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { KEYBOARD_SHORTCUTS, resolveKeyboardShortcut } from './shortcuts';
 
-test('resolveKeyboardShortcut maps requested image transform shortcuts cleanly', () => {
-  assert.equal(resolveKeyboardShortcut({ key: 'r', ctrlKey: true }), 'rotate-cw');
+test('resolveKeyboardShortcut maps requested image transform shortcuts cleanly and leaves Ctrl+R for browser refresh', () => {
+  assert.equal(resolveKeyboardShortcut({ key: 'r', ctrlKey: true }), null);
   assert.equal(
     resolveKeyboardShortcut({ key: 'R', ctrlKey: true, shiftKey: true }),
-    'rotate-ccw'
+    null
   );
   assert.equal(resolveKeyboardShortcut({ key: 'f', ctrlKey: true }), 'flip-horizontal');
   assert.equal(
@@ -39,6 +39,7 @@ test('resolveKeyboardShortcut preserves precedence between Shift and standard Ct
 test('resolveKeyboardShortcut handles edit, view, zoom, and unmodified tool/size shortcuts', () => {
   assert.equal(resolveKeyboardShortcut({ key: 's', ctrlKey: true }), 'save');
   assert.equal(resolveKeyboardShortcut({ key: 'S', ctrlKey: true, shiftKey: true }), 'quick-save');
+  assert.equal(resolveKeyboardShortcut({ key: 'H', ctrlKey: true, shiftKey: true }), 'share');
   assert.equal(resolveKeyboardShortcut({ key: 'o', ctrlKey: true }), 'open-templates');
   assert.equal(resolveKeyboardShortcut({ key: 'p', ctrlKey: true }), 'print');
   assert.equal(resolveKeyboardShortcut({ key: 'c', ctrlKey: true }), 'copy');
@@ -73,9 +74,9 @@ test('resolveKeyboardShortcut handles edit, view, zoom, and unmodified tool/size
   assert.equal(resolveKeyboardShortcut({ key: 'Escape' }), 'clear-selection');
 });
 
-test('KEYBOARD_SHORTCUTS catalog includes rotate, crop, and flip entries', () => {
+test('KEYBOARD_SHORTCUTS catalog includes crop and flip entries without rotate', () => {
   const keys = KEYBOARD_SHORTCUTS.map((s) => s.keys);
-  assert.ok(keys.includes('Ctrl+R'));
+  assert.equal(keys.includes('Ctrl+R'), false);
   assert.ok(keys.includes('Ctrl+Shift+X'));
   assert.ok(keys.includes('Ctrl+F'));
 });

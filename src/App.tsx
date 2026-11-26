@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Layers } from 'lucide-react';
 import { PaintRibbon } from './components/PaintRibbon';
-import { PaintStatusBar } from './components/PaintStatusBar';
+import { PaintStatusBar, ProjectSyncStatus } from './components/PaintStatusBar';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CanvasStudio, CanvasStudioHandle } from './components/CanvasStudio';
 import { TemplateModal } from './components/TemplateModal';
@@ -17,6 +17,23 @@ import { ClearConfirmModal } from './components/ClearConfirmModal';
 import { ResizeCanvasModal } from './components/ResizeCanvasModal';
 import { ColorsModal } from './components/ColorsModal';
 import { LayersSidebar } from './components/LayersSidebar';
+import { User } from 'firebase/auth';
+import { subscribeToAuthChanges } from './firebase/auth';
+import {
+  LocalArtworkRecord,
+  migrateGuestArtworksToUser,
+  getPendingSyncArtworks,
+  updateLocalArtworkMetadata,
+  saveUploadedMedia,
+  getUploadedMedia,
+} from './utils/indexedDB';
+import {
+  saveArtworkToFirestore,
+  extractReadableFirestoreError,
+} from './firebase/firestore';
+import { AuthModal } from './components/AuthModal';
+import { CloudSaveModal } from './components/CloudSaveModal';
+import { MyArtworkGallery } from './components/MyArtworkGallery';
 import { GlitterTrailOverlay } from './components/GlitterTrailOverlay';
 import {
   CanvasLayer,
@@ -28,6 +45,7 @@ import {
   ShapeType,
   StampShape,
   Stroke,
+  SymmetryGuideMode,
   ToolType,
 } from './types';
 import {
@@ -38,6 +56,7 @@ import {
   exportStrokesToSvgString,
   getMirrorModeStatusMessage,
 } from './utils/drawing';
+import { mergePaletteIntoCustomColors } from './utils/paletteExtraction';
 import {
   DEFAULT_LAYER_ID,
   addTransparentLayer,
@@ -57,16 +76,59 @@ import { TEMPLATES } from './data/templates';
 import { resolveKeyboardShortcut } from './utils/shortcuts';
 import { recordRecentColor } from './utils/color';
 import { generateTimestampedPngFilename } from './utils/quickSave';
+import { DEFAULT_BUCKET_TOLERANCE } from './utils/floodFill';
+import { getSymmetryGuidesStatusMessage } from './utils/symmetryGuides';
+import {
+  THEME_STORAGE_KEY,
+  ThemeMode,
+  resolveThemePreference,
+  toggleThemeMode,
+} from './utils/theme';
+import {
+  canShareFiles,
+  createPngShareFile,
+  dataUrlToBlob,
+  getShareSessionUrl,
+  getShareText,
+  getShareTitle,
+  isAbortError,
+  isWebShareSupported,
+} from './utils/share';
 
 export default function App() {
   // Navigation / View State: Welcome Page as front page
   const [currentView, setCurrentView] = useState<'welcome' | 'studio'>('welcome');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    try {
+      return typeof window !== 'undefined'
+        ? resolveThemePreference(window.localStorage.getItem(THEME_STORAGE_KEY))
+        : 'light';
+    } catch {
+      return 'light';
+    }
+  });
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle('theme-dark', themeMode === 'dark');
+    document.documentElement.setAttribute('data-theme', themeMode);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [themeMode]);
+
+  const handleToggleTheme = useCallback(() => {
+    setThemeMode((prev) => toggleThemeMode(prev));
+  }, []);
 
   // Drawing Tools & Windows Paint Ribbon State
   const [ribbonTab, setRibbonTab] = useState<'file' | 'home' | 'view'>('home');
   const [isRibbonOpen, setIsRibbonOpen] = useState<boolean>(true);
   const [isRibbonPinned, setIsRibbonPinned] = useState<boolean>(true);
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none');
+  const [symmetryGuides, setSymmetryGuides] = useState<SymmetryGuideMode>('none');
   const [tool, setTool] = useState<ToolType>('brush');
   const [stampShape, setStampShape] = useState<StampShape>('star');
   const [lastDrawingTool, setLastDrawingTool] = useState<ToolType>('brush');
@@ -81,6 +143,7 @@ export default function App() {
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [size, setSize] = useState<number>(5);
   const [stabilization, setStabilization] = useState<number>(45);
+  const [bucketTolerance, setBucketTolerance] = useState<number>(DEFAULT_BUCKET_TOLERANCE);
   const [pressureSensitive, setPressureSensitive] = useState<boolean>(true);
   const [isGradientBrush, setIsGradientBrush] = useState<boolean>(false);
   const [opacity] = useState<number>(1.0);
@@ -137,7 +200,23 @@ export default function App() {
   // Saved Artworks (Session Gallery)
   const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);
 
-  // Modals
+  // Modals & Cloud State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup' | 'forgot' | 'profile'>('signin');
+  const [authPromptMessage, setAuthPromptMessage] = useState<string | undefined>(undefined);
+  const [onAuthSuccessAction, setOnAuthSuccessAction] = useState<(() => void) | null>(null);
+
+  const [isCloudSaveModalOpen, setIsCloudSaveModalOpen] = useState<boolean>(false);
+  const [isCloudGalleryOpen, setIsCloudGalleryOpen] = useState<boolean>(false);
+  const [currentCloudArtworkId, setCurrentCloudArtworkId] = useState<string | null>(null);
+  const [currentCloudArtworkTitle, setCurrentCloudArtworkTitle] = useState<string>('');
+  const [currentCloudArtworkCreatedAt, setCurrentCloudArtworkCreatedAt] = useState<string | null>(null);
+  const [currentCloudArtworkUpdatedAt, setCurrentCloudArtworkUpdatedAt] = useState<string | null>(null);
+  const [projectSyncStatus, setProjectSyncStatus] = useState<ProjectSyncStatus>('Local Only');
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
+
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState<boolean>(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
   const [isGalleryModalOpen, setIsGalleryModalOpen] = useState<boolean>(false);
@@ -146,7 +225,40 @@ export default function App() {
   const [isResizeModalOpen, setIsResizeModalOpen] = useState<boolean>(false);
   const [isColorsModalOpen, setIsColorsModalOpen] = useState<boolean>(false);
   const [isQuickSaving, setIsQuickSaving] = useState<boolean>(false);
+  const [isSharing, setIsSharing] = useState<boolean>(false);
   const [lastQuickSaveFile, setLastQuickSaveFile] = useState<string>('');
+
+  // Subscribe to Firebase Auth state and track auth resolution before cloud queries
+  const prevUserUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthChanges((user) => {
+      const nextUid = user?.uid || null;
+      if (prevUserUidRef.current && prevUserUidRef.current !== nextUid) {
+        // User signed out or switched accounts: clear active cloud project bindings to preserve isolation
+        setCurrentCloudArtworkId(null);
+        setCurrentCloudArtworkTitle('');
+        setCurrentCloudArtworkCreatedAt(null);
+        setCurrentCloudArtworkUpdatedAt(null);
+        setProjectSyncStatus('Local Only');
+      }
+      prevUserUidRef.current = nextUid;
+      setCurrentUser(user);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Prevent accidental unload if there are unsaved canvas changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<{ text: string; hex?: string } | null>(null);
@@ -223,6 +335,8 @@ export default function App() {
     historyRef.current.pushState(strokes);
     setStrokes(newStrokes);
     updateHistoryFlags();
+    setHasUnsavedChanges(true);
+    setProjectSyncStatus('Local Only');
   };
 
   const handleUndo = () => {
@@ -230,6 +344,8 @@ export default function App() {
     if (previous !== null) {
       setStrokes(previous);
       updateHistoryFlags();
+      setHasUnsavedChanges(true);
+      setProjectSyncStatus('Local Only');
     }
   };
 
@@ -238,6 +354,8 @@ export default function App() {
     if (next !== null) {
       setStrokes(next);
       updateHistoryFlags();
+      setHasUnsavedChanges(true);
+      setProjectSyncStatus('Local Only');
     }
   };
 
@@ -305,6 +423,12 @@ export default function App() {
     setActiveLayerId(DEFAULT_LAYER_ID);
     canvasStudioRef.current?.clearCanvas();
     setIsAutoFullScreenCanvas(true);
+    setCurrentCloudArtworkId(null);
+    setCurrentCloudArtworkTitle('');
+    setCurrentCloudArtworkCreatedAt(null);
+    setCurrentCloudArtworkUpdatedAt(null);
+    setHasUnsavedChanges(false);
+    setProjectSyncStatus('Local Only');
     updateHistoryFlags();
     showToast('New blank canvas ready');
   };
@@ -324,9 +448,219 @@ export default function App() {
     setZoomLevel(1.0);
     setResetViewSignal((n) => n + 1);
     setIsAutoFullScreenCanvas(true);
+    setCurrentCloudArtworkId(null);
+    setCurrentCloudArtworkTitle('');
+    setCurrentCloudArtworkCreatedAt(null);
+    setCurrentCloudArtworkUpdatedAt(null);
+    setHasUnsavedChanges(false);
+    setProjectSyncStatus('Local Only');
     updateHistoryFlags();
     showToast('Page cleared');
   };
+
+  const getCanvasExportDataUrl = useCallback((): string | null => {
+    let dataUrl = canvasStudioRef.current?.exportRaster('png', 1.0) ?? null;
+    if (!dataUrl) {
+      const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
+      const fallbackCanvas = document.createElement('canvas');
+      fallbackCanvas.width = Math.max(1, canvasDimensions.width);
+      fallbackCanvas.height = Math.max(1, canvasDimensions.height);
+      const fctx = fallbackCanvas.getContext('2d');
+      if (fctx) {
+        fctx.fillStyle = '#FFFFFF';
+        fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
+        for (const s of visibleOrderedStrokes) {
+          renderStrokeToContext(fctx, s, 'export');
+        }
+        dataUrl = fallbackCanvas.toDataURL('image/png', 1.0);
+      }
+    }
+    return dataUrl;
+  }, [strokes, layers, canvasDimensions]);
+
+  const handleOpenAuth = useCallback(
+    (
+      mode: 'signin' | 'signup' | 'forgot' | 'profile' = 'signin',
+      prompt?: string,
+      onSuccess?: () => void
+    ) => {
+      setAuthModalMode(mode);
+      setAuthPromptMessage(prompt);
+      setOnAuthSuccessAction(() => onSuccess || null);
+      setIsAuthModalOpen(true);
+    },
+    []
+  );
+
+  const handleOpenCloudSave = useCallback(() => {
+    setIsCloudSaveModalOpen(true);
+  }, []);
+
+  const handleOpenCloudGallery = useCallback(() => {
+    setIsCloudGalleryOpen(true);
+  }, []);
+
+  // Sequential migration of guest drafts and sync of pending artworks once Auth is ready
+  useEffect(() => {
+    if (!isAuthReady || !currentUser) return;
+
+    let cancelled = false;
+
+    const migrateAndSyncPending = async () => {
+      try {
+        const count = await migrateGuestArtworksToUser(currentUser.uid);
+        if (!cancelled && count > 0) {
+          showToast(`Linked ${count} guest drawing${count === 1 ? '' : 's'} to your account`);
+        }
+
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+        const pending = await getPendingSyncArtworks(currentUser.uid);
+        for (const item of pending) {
+          if (cancelled) return;
+          try {
+            const cloudMeta = await saveArtworkToFirestore(currentUser.uid, item);
+            await updateLocalArtworkMetadata(item.id, {
+              syncStatus: 'synced',
+              lastSyncedAt: cloudMeta.updatedAt,
+              updatedAt: cloudMeta.updatedAt,
+            });
+            if (!cancelled && item.id === currentCloudArtworkId) {
+              setCurrentCloudArtworkUpdatedAt(cloudMeta.updatedAt);
+              setProjectSyncStatus('Saved to Cloud');
+            }
+          } catch (e) {
+            const readable = extractReadableFirestoreError(e);
+            console.warn('Auto-sync failed for artwork:', item.id, readable);
+            await updateLocalArtworkMetadata(item.id, {
+              syncStatus: 'sync_failed',
+              syncError: readable,
+            });
+            if (!cancelled && item.id === currentCloudArtworkId) {
+              setProjectSyncStatus('Save Failed');
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Migration/sync check notice:', err);
+      }
+    };
+
+    void migrateAndSyncPending();
+
+    const handleOnline = () => {
+      void migrateAndSyncPending();
+      showToast('Online — checking drawing sync');
+    };
+    window.addEventListener('online', handleOnline);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [isAuthReady, currentUser, currentCloudArtworkId, showToast]);
+
+  const handleCloudSavedSuccess = useCallback(
+    (artwork: LocalArtworkRecord) => {
+      setCurrentCloudArtworkId(artwork.id);
+      setCurrentCloudArtworkTitle(artwork.title);
+      setCurrentCloudArtworkCreatedAt(artwork.createdAt || null);
+      setCurrentCloudArtworkUpdatedAt(artwork.updatedAt || null);
+
+      if (artwork.syncStatus === 'synced') {
+        setHasUnsavedChanges(false);
+        setProjectSyncStatus('Saved to Cloud');
+        showToast(`Saved "${artwork.title}" to Cloud!`);
+      } else if (artwork.syncStatus === 'waiting_to_sync') {
+        setHasUnsavedChanges(false);
+        setProjectSyncStatus('Waiting to Sync');
+        showToast(`Saved "${artwork.title}" locally (waiting to sync online)`);
+      } else if (artwork.syncStatus === 'sync_failed') {
+        setProjectSyncStatus('Save Failed');
+        showToast(`Saved "${artwork.title}" locally, but Cloud save failed`);
+      } else {
+        setHasUnsavedChanges(false);
+        setProjectSyncStatus('Local Only');
+        showToast(`Saved "${artwork.title}" locally!`);
+      }
+    },
+    [showToast]
+  );
+
+  const handleOpenCloudArtwork = useCallback(
+    async (artwork: LocalArtworkRecord) => {
+      try {
+        const ed = artwork.editableData;
+        if (ed?.strokes) {
+          for (const s of ed.strokes) {
+            if (s.rasterDataUrl) {
+              preloadStrokeRasterImage(s.rasterDataUrl);
+            }
+          }
+          setStrokes(ed.strokes);
+          historyRef.current = new HistoryManager(35);
+          historyRef.current.pushState(ed.strokes);
+          updateHistoryFlags();
+        }
+        if (ed?.layers && ed.layers.length > 0) {
+          setLayers(ed.layers);
+          setActiveLayerId(ed.activeLayerId || ed.layers[0].id);
+        } else {
+          const initialLayers = createInitialLayers();
+          setLayers(initialLayers);
+          setActiveLayerId(DEFAULT_LAYER_ID);
+        }
+        if (typeof ed?.templateOpacity === 'number') {
+          setTemplateOpacity(ed.templateOpacity);
+        }
+        if (ed?.template) {
+          let restoredTemplate = ed.template;
+          if (
+            restoredTemplate.id?.startsWith('custom_') &&
+            (!restoredTemplate.mediaUrl || restoredTemplate.mediaUrl.startsWith('blob:'))
+          ) {
+            try {
+              const localMediaUrl = await getUploadedMedia(restoredTemplate.id);
+              restoredTemplate = {
+                ...restoredTemplate,
+                mediaUrl: localMediaUrl || '',
+              };
+            } catch {
+              restoredTemplate = { ...restoredTemplate, mediaUrl: '' };
+            }
+          }
+          setActiveTemplate(restoredTemplate);
+        } else {
+          setActiveTemplate(null);
+        }
+        if (artwork.canvasWidth && artwork.canvasHeight) {
+          setCanvasDimensions({
+            width: artwork.canvasWidth,
+            height: artwork.canvasHeight,
+          });
+          setIsAutoFullScreenCanvas(false);
+        }
+        setCurrentCloudArtworkId(artwork.id);
+        setCurrentCloudArtworkTitle(artwork.title);
+        setCurrentCloudArtworkCreatedAt(artwork.createdAt || null);
+        setCurrentCloudArtworkUpdatedAt(artwork.updatedAt || null);
+        setHasUnsavedChanges(false);
+        setProjectSyncStatus(
+          artwork.syncStatus === 'synced'
+            ? 'Saved to Cloud'
+            : artwork.syncStatus === 'waiting_to_sync'
+            ? 'Waiting to Sync'
+            : artwork.syncStatus === 'sync_failed'
+            ? 'Save Failed'
+            : 'Local Only'
+        );
+        showToast(`Loaded "${artwork.title}"`);
+      } catch (err) {
+        console.error('Failed to open artwork project data:', err);
+        showToast('Error opening artwork project data');
+      }
+    },
+    [showToast]
+  );
 
   const handleToolSelect = (nextTool: ToolType) => {
     if (nextTool !== 'picker' && nextTool !== 'magnifier') {
@@ -396,10 +730,36 @@ export default function App() {
 
   const handleUploadImage = (file: File) => {
     const isVideo = file.type.startsWith('video/');
+    const customId = `custom_${Date.now()}`;
+    const baseName = file.name.replace(/\.[^/.]+$/, '').slice(0, 24) || 'Uploaded Image';
+
+    if (!isVideo && file.size <= 8 * 1024 * 1024 && typeof FileReader !== 'undefined') {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        if (dataUrl) {
+          void saveUploadedMedia(customId, dataUrl, file.name).catch((err) => {
+            console.warn('Could not cache uploaded image in IndexedDB:', err);
+          });
+        }
+        handleSelectTemplate({
+          id: customId,
+          name: baseName,
+          category: 'nature',
+          difficulty: 'Easy',
+          type: 'photo',
+          mediaUrl: dataUrl || URL.createObjectURL(file),
+          description: 'Uploaded photo tracing sheet',
+        });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
     const url = URL.createObjectURL(file);
     const customTemplate: DrawingTemplate = {
-      id: `custom_${Date.now()}`,
-      name: file.name.replace(/\.[^/.]+$/, '').slice(0, 24) || 'Uploaded Image',
+      id: customId,
+      name: baseName,
       category: 'nature',
       difficulty: 'Easy',
       type: isVideo ? 'video' : 'photo',
@@ -481,6 +841,9 @@ export default function App() {
       const hasOpenModal =
         isTemplateModalOpen ||
         isSaveModalOpen ||
+        isCloudSaveModalOpen ||
+        isCloudGalleryOpen ||
+        isAuthModalOpen ||
         isGalleryModalOpen ||
         isSparkModalOpen ||
         isClearConfirmOpen ||
@@ -492,6 +855,9 @@ export default function App() {
           e.preventDefault();
           setIsTemplateModalOpen(false);
           setIsSaveModalOpen(false);
+          setIsCloudSaveModalOpen(false);
+          setIsCloudGalleryOpen(false);
+          setIsAuthModalOpen(false);
           setIsGalleryModalOpen(false);
           setIsSparkModalOpen(false);
           setIsClearConfirmOpen(false);
@@ -514,10 +880,13 @@ export default function App() {
           handleRedo();
           break;
         case 'save':
-          setIsSaveModalOpen(true);
+          setIsCloudSaveModalOpen(true);
           break;
         case 'quick-save':
           void handleQuickSave();
+          break;
+        case 'share':
+          void handleShare();
           break;
         case 'open-templates':
           setIsTemplateModalOpen(true);
@@ -557,24 +926,12 @@ export default function App() {
         case 'resize':
           setIsResizeModalOpen(true);
           break;
-        case 'rotate-cw':
-          canvasStudioRef.current?.rotateOrFlip('cw90');
-          showToast('Rotated right 90° (Ctrl+R)');
-          break;
-        case 'rotate-ccw':
-          canvasStudioRef.current?.rotateOrFlip('ccw90');
-          showToast('Rotated left 90° (Ctrl+Shift+R)');
-          break;
-        case 'rotate-180':
-          canvasStudioRef.current?.rotateOrFlip('180');
-          showToast('Rotated 180°');
-          break;
         case 'flip-horizontal':
-          canvasStudioRef.current?.rotateOrFlip('flipH');
+          canvasStudioRef.current?.flipHorizontal();
           showToast('Flipped horizontal (Ctrl+F)');
           break;
         case 'flip-vertical':
-          canvasStudioRef.current?.rotateOrFlip('flipV');
+          canvasStudioRef.current?.flipVertical();
           showToast('Flipped vertical (Ctrl+Shift+F)');
           break;
         case 'filter-invert':
@@ -775,6 +1132,101 @@ export default function App() {
     }
   };
 
+  const handleShare = async () => {
+    if (isSharing) return;
+    setIsSharing(true);
+    try {
+      const baseTitle = activeTemplate ? activeTemplate.name : 'Pixora';
+      const shareTitle = getShareTitle(activeTemplate?.name);
+      const shareText = getShareText(activeTemplate?.name);
+      const sessionUrl = getShareSessionUrl(
+        typeof window !== 'undefined' ? window.location.origin : '',
+        activeTemplate?.id
+      );
+
+      // Export canvas as PNG
+      let pngDataUrl = canvasStudioRef.current?.exportRaster('png', 1.0) ?? null;
+      if (!pngDataUrl) {
+        const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
+        const fallbackCanvas = document.createElement('canvas');
+        fallbackCanvas.width = Math.max(1, canvasDimensions.width);
+        fallbackCanvas.height = Math.max(1, canvasDimensions.height);
+        const fctx = fallbackCanvas.getContext('2d');
+        if (fctx) {
+          fctx.fillStyle = '#FFFFFF';
+          fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
+          for (const s of visibleOrderedStrokes) {
+            renderStrokeToContext(fctx, s, 'export');
+          }
+          pngDataUrl = fallbackCanvas.toDataURL('image/png', 1.0);
+        }
+      }
+
+      let shareFile: File | null = null;
+      if (pngDataUrl) {
+        try {
+          const blob = dataUrlToBlob(pngDataUrl);
+          shareFile = createPngShareFile(blob, baseTitle);
+        } catch (e) {
+          console.warn('Could not construct image File for Web Share:', e);
+        }
+      }
+
+      const nav = typeof navigator !== 'undefined' ? (navigator as any) : null;
+      const webShareSupported = isWebShareSupported(nav);
+
+      if (webShareSupported) {
+        // If file sharing is supported by navigator.canShare, share image file
+        if (shareFile && canShareFiles(nav, shareFile)) {
+          try {
+            await nav.share({
+              title: shareTitle,
+              text: shareText,
+              files: [shareFile],
+            });
+            showToast('Artwork shared successfully!');
+            return;
+          } catch (fileShareErr: any) {
+            if (isAbortError(fileShareErr)) {
+              return; // User dismissed share dialog
+            }
+            console.warn('File share threw error, attempting link share fallback:', fileShareErr);
+          }
+        }
+
+        // Web Share URL & text sharing
+        try {
+          await nav.share({
+            title: shareTitle,
+            text: shareText,
+            url: sessionUrl,
+          });
+          showToast('Canvas session link shared!');
+          return;
+        } catch (urlShareErr: any) {
+          if (isAbortError(urlShareErr)) {
+            return; // User dismissed share dialog
+          }
+          console.warn('URL share threw error, falling back to clipboard copy:', urlShareErr);
+        }
+      }
+
+      // Fallback if Web Share API is not supported or not allowed (e.g. desktop iframe without permissions)
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(sessionUrl);
+        showToast('Canvas link copied to clipboard!');
+      } else {
+        showToast(`Share URL: ${sessionUrl}`);
+      }
+    } catch (err: any) {
+      if (isAbortError(err)) return;
+      console.error('Share action failed:', err);
+      showToast('Could not share canvas');
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
   const handleDeleteFromGallery = (id: string) => {
     setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
     showToast('Artwork removed from session');
@@ -782,11 +1234,17 @@ export default function App() {
 
   return (
     <div
-      className={`${
+      data-testid="app-root"
+      data-theme={themeMode}
+      className={`${themeMode === 'dark' ? 'theme-dark ' : ''}${
         currentView === 'studio'
-          ? 'h-[100dvh] overflow-hidden bg-[#C9D2E3]'
-          : 'min-h-screen bg-gradient-to-br from-white via-blue-50/70 to-blue-200/40'
-      } text-[#1E1E1E] flex flex-col font-sans selection:bg-blue-200 selection:text-blue-900 overflow-x-hidden`}
+          ? themeMode === 'dark'
+            ? 'h-[100dvh] overflow-hidden bg-[#12151C] text-[#E6EDF7]'
+            : 'h-[100dvh] overflow-hidden bg-[#C9D2E3] text-[#1E1E1E]'
+          : themeMode === 'dark'
+          ? 'min-h-screen bg-[#0B0F17] text-[#E6EDF7]'
+          : 'min-h-screen bg-gradient-to-br from-white via-blue-50/70 to-blue-200/40 text-[#1E1E1E]'
+      } flex flex-col font-sans selection:bg-blue-200 selection:text-blue-900 overflow-x-hidden`}
     >
       <GlitterTrailOverlay
         enabled={showGlitter}
@@ -795,7 +1253,13 @@ export default function App() {
       />
       {/* Subtle Non-Obstructive Feedback Toast */}
       {toastMessage && (
-        <div className="fixed bottom-9 left-3 z-50 pointer-events-none px-3 py-1 bg-[#F5F6F7] border border-[#9AA4B2] shadow-md flex items-center gap-2 text-[11px] font-medium text-[#1E1E1E]">
+        <div
+          className={`fixed bottom-9 left-3 z-50 pointer-events-none px-3 py-1 border shadow-md flex items-center gap-2 text-[11px] font-medium ${
+            themeMode === 'dark'
+              ? 'bg-[#202530] border-[#3B4457] text-[#E6EDF7]'
+              : 'bg-[#F5F6F7] border-[#9AA4B2] text-[#1E1E1E]'
+          }`}
+        >
           {toastMessage.hex && (
             <span
               className="w-3 h-3 border border-[#666] inline-block"
@@ -807,11 +1271,16 @@ export default function App() {
       )}
 
       {currentView === 'welcome' ? (
-        <WelcomeScreen onStartCreating={handleStartFreshCanvas} />
+        <WelcomeScreen
+          onStartCreating={handleStartFreshCanvas}
+          themeMode={themeMode}
+          onToggleTheme={handleToggleTheme}
+        />
       ) : (
         <>
           <div
             data-testid="paint-studio-window"
+            data-theme={themeMode}
             data-last-quicksave={lastQuickSaveFile}
             className="flex-1 min-h-0 flex flex-col overflow-hidden"
           >
@@ -843,6 +1312,8 @@ export default function App() {
               onSizeChange={setSize}
               stabilization={stabilization}
               onStabilizationChange={setStabilization}
+              bucketTolerance={bucketTolerance}
+              onBucketToleranceChange={setBucketTolerance}
               pressureSensitive={pressureSensitive}
               onPressureSensitiveChange={(enabled) => {
                 setPressureSensitive(enabled);
@@ -874,9 +1345,12 @@ export default function App() {
               }}
               onOpen={() => setIsTemplateModalOpen(true)}
               onUploadImage={handleUploadImage}
-              onSave={() => setIsSaveModalOpen(true)}
+              onSave={handleOpenCloudSave}
+              onOpenExport={() => setIsSaveModalOpen(true)}
               onQuickSave={() => void handleQuickSave()}
               isQuickSaving={isQuickSaving}
+              onShare={() => void handleShare()}
+              isSharing={isSharing}
               onExportFormat={handleExportFormat}
               onPrint={() => window.print()}
               onClearPage={handleClearPage}
@@ -891,7 +1365,6 @@ export default function App() {
             onClearSelection={() => canvasStudioRef.current?.clearSelection()}
             onDeleteSelection={() => canvasStudioRef.current?.deleteSelection()}
             onOpenResize={() => setIsResizeModalOpen(true)}
-            onRotateCanvas={(action) => canvasStudioRef.current?.rotateOrFlip(action)}
             onFlipHorizontal={() => canvasStudioRef.current?.flipHorizontal()}
             onFlipVertical={() => canvasStudioRef.current?.flipVertical()}
             zoomLevel={zoomLevel}
@@ -948,16 +1421,33 @@ export default function App() {
               setMirrorMode(mode);
               showToast(getMirrorModeStatusMessage(mode));
             }}
+            symmetryGuides={symmetryGuides}
+            onSymmetryGuidesChange={(nextGuides) => {
+              setSymmetryGuides(nextGuides);
+              showToast(getSymmetryGuidesStatusMessage(nextGuides));
+            }}
             onMirrorHorizontal={() => canvasStudioRef.current?.toggleMirrorHorizontal()}
             onMirrorVertical={() => canvasStudioRef.current?.toggleMirrorVertical()}
             onApplyFilter={(filter, options) => canvasStudioRef.current?.applyFilter(filter, options)}
             onApplyGrayscale={() => canvasStudioRef.current?.applyGrayscaleFilter()}
             onApplySepia={() => canvasStudioRef.current?.applySepiaFilter()}
             onApplyBrightness={(delta) => canvasStudioRef.current?.applyBrightnessFilter(delta)}
+            themeMode={themeMode}
+            onToggleTheme={handleToggleTheme}
+            user={currentUser}
+            onOpenAuth={handleOpenAuth}
+            onSaveToCloud={handleOpenCloudSave}
+            onOpenCloudGallery={handleOpenCloudGallery}
+            hasUnsavedChanges={hasUnsavedChanges}
+            currentArtworkTitle={currentCloudArtworkTitle}
           />
 
           {/* Main Pale Blue-Grey Workspace & Layers Sidebar */}
-          <main className="flex-1 min-h-0 w-full flex flex-row items-stretch relative overflow-hidden bg-[#C9D2E3]">
+          <main
+            className={`flex-1 min-h-0 w-full flex flex-row items-stretch relative overflow-hidden ${
+              themeMode === 'dark' ? 'bg-[#12151C]' : 'bg-[#C9D2E3]'
+            }`}
+          >
             <div className="flex-1 min-w-0 min-h-0 flex flex-col relative overflow-hidden">
               <CanvasStudio
                 ref={canvasStudioRef}
@@ -970,6 +1460,7 @@ export default function App() {
                 secondaryColor={secondaryColor}
                 size={size}
                 stabilization={stabilization}
+                bucketTolerance={bucketTolerance}
                 pressureSensitive={pressureSensitive}
                 isGradientBrush={isGradientBrush}
                 opacity={opacity}
@@ -992,6 +1483,7 @@ export default function App() {
                 showRulers={showRulers}
                 mirrorMode={mirrorMode}
                 onMirrorModeChange={setMirrorMode}
+                symmetryGuides={symmetryGuides}
                 onCanvasStrokeStart={() => {
                   if (!isRibbonPinned && isRibbonOpen) {
                     setIsRibbonOpen(false);
@@ -1064,6 +1556,8 @@ export default function App() {
               onZoomOut={handleZoomOut}
               onZoomChange={setZoomLevel}
               onResetZoom={handleResetZoom}
+              syncStatus={projectSyncStatus}
+              onSyncClick={handleOpenCloudSave}
             />
           )}
 
@@ -1091,10 +1585,22 @@ export default function App() {
             onSecondaryColorChange={setSecondaryColor}
             recentColors={recentColors}
             onCommitRecentColor={handleRecordRecentColor}
+            customColors={customColors}
             onAddCustomColor={(hex) => {
-              setCustomColors((prev) =>
-                prev.includes(hex) ? prev : [hex, ...prev].slice(0, 10)
-              );
+              setCustomColors((prev) => mergePaletteIntoCustomColors(prev, [hex]));
+            }}
+            onAddCustomColors={(hexes) => {
+              setCustomColors((prev) => mergePaletteIntoCustomColors(prev, hexes));
+              if (hexes.length > 0) {
+                showToast(
+                  `Added ${hexes.length} color${hexes.length === 1 ? '' : 's'} to Custom Colors`,
+                  hexes[0]
+                );
+              }
+            }}
+            onClearCustomColors={() => {
+              setCustomColors([]);
+              showToast('Cleared Custom Colors');
             }}
           />
 
@@ -1143,6 +1649,78 @@ export default function App() {
               onClose={() => setIsClearConfirmOpen(false)}
               onConfirmClear={handleConfirmClear}
               strokesCount={strokes.length}
+            />
+
+            {/* Firebase Auth Modal */}
+            <AuthModal
+              isOpen={isAuthModalOpen}
+              onClose={() => setIsAuthModalOpen(false)}
+              user={currentUser}
+              initialMode={authModalMode}
+              promptMessage={authPromptMessage}
+              onSuccess={() => {
+                onAuthSuccessAction?.();
+                setOnAuthSuccessAction(null);
+              }}
+              onOpenCloudGallery={() => setIsCloudGalleryOpen(true)}
+            />
+
+            {/* Cloud / Local Save Modal */}
+            <CloudSaveModal
+              isOpen={isCloudSaveModalOpen}
+              onClose={() => setIsCloudSaveModalOpen(false)}
+              user={currentUser}
+              isAuthReady={isAuthReady}
+              currentArtworkId={currentCloudArtworkId}
+              currentArtworkTitle={currentCloudArtworkTitle}
+              currentArtworkCreatedAt={currentCloudArtworkCreatedAt}
+              currentArtworkUpdatedAt={currentCloudArtworkUpdatedAt}
+              strokes={strokes}
+              layers={layers}
+              activeLayerId={activeLayerId}
+              activeTemplate={activeTemplate}
+              templateOpacity={templateOpacity}
+              zoomLevel={zoomLevel}
+              canvasDimensions={canvasDimensions}
+              getCanvasDataUrl={getCanvasExportDataUrl}
+              onSavedSuccess={handleCloudSavedSuccess}
+              onSyncStatusChange={setProjectSyncStatus}
+              onRequestSignIn={() => {
+                handleOpenAuth('signin', 'Sign in to save your artwork to Google Firebase Cloud.', () => {
+                  setIsCloudSaveModalOpen(true);
+                });
+              }}
+            />
+
+            {/* Cloud Artwork Gallery Modal */}
+            <MyArtworkGallery
+              isOpen={isCloudGalleryOpen}
+              onClose={() => setIsCloudGalleryOpen(false)}
+              user={currentUser}
+              isAuthReady={isAuthReady}
+              hasUnsavedChanges={hasUnsavedChanges}
+              onOpenArtwork={(artwork) => void handleOpenCloudArtwork(artwork)}
+              onRequestSignIn={() => {
+                handleOpenAuth('signin', 'Sign in to access your cloud drawings.');
+              }}
+              onOpenNewCanvas={() => {
+                handleConfirmClear();
+                setCurrentView('studio');
+              }}
+              onArtworkRenamed={(id, newTitle) => {
+                if (id === currentCloudArtworkId) {
+                  setCurrentCloudArtworkTitle(newTitle);
+                }
+              }}
+              onArtworkDeleted={(id) => {
+                if (id === currentCloudArtworkId) {
+                  setCurrentCloudArtworkId(null);
+                  setCurrentCloudArtworkTitle('');
+                  setCurrentCloudArtworkCreatedAt(null);
+                  setCurrentCloudArtworkUpdatedAt(null);
+                  setProjectSyncStatus('Local Only');
+                }
+              }}
             />
           </div>
         </>

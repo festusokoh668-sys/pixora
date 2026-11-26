@@ -523,7 +523,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
                     : exportFormat === 'jpg'
                       ? 'JPEG Image'
                       : 'Vector SVG'}{' '}
-                  file downloaded and saved to your Studio Gallery.
+                  file downloaded to your device.
                 </p>
               </div>
             </div>
@@ -575,7 +575,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
           <button
             onClick={handleSaveToGalleryOnly}
             className="w-full sm:w-auto py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            title="Save to session gallery without downloading"
+            title="Add snapshot to temporary session history (use Save Artwork for cloud/local persistence)"
           >
             <BookmarkPlus className="w-4 h-4 text-slate-600" />
             <span>Gallery</span>

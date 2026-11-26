@@ -65,6 +65,8 @@ export type PaintFinish = 'oil' | 'acrylic' | 'ink' | 'graphite' | 'watercolor';
 
 export type MirrorMode = 'none' | 'horizontal' | 'vertical' | 'quad';
 
+export type SymmetryGuideMode = 'none' | 'vertical' | 'horizontal' | 'both';
+
 export type LayerFilterType = 'grayscale' | 'sepia' | 'brightness' | 'invert';
 
 export interface Point {
@@ -100,6 +102,8 @@ export interface Stroke {
   paintFinish?: PaintFinish;
   // Stamp brush property (tool === 'stamp')
   stampShape?: StampShape;
+  // Paint bucket flood fill color tolerance (0-255, tool === 'bucket')
+  tolerance?: number;
   // Geometric shape properties (tool === 'shape')
   shapeType?: ShapeType;
   outlineStyle?: ShapeOutlineStyle;
