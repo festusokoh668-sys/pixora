@@ -157,6 +157,15 @@ export interface DrawingCollection {
   };
 }
 
+export interface SavedArtworkProject {
+  strokes: Stroke[];
+  layers: CanvasLayer[];
+  canvasDimensions: { width: number; height: number };
+  activeLayerId?: string;
+  templateId?: string;
+  templateOpacity?: number;
+}
+
 export interface SavedArtwork {
   id: string;
   title: string;
@@ -164,6 +173,12 @@ export interface SavedArtwork {
   dataUrl: string;
   templateName?: string;
   strokesCount: number;
+  /** Editable project snapshot stored locally in IndexedDB. */
+  project?: SavedArtworkProject;
+  /** Unix timestamp used for stable sorting in the local gallery. */
+  savedAt?: number;
+  /** Artwork is stored on this browser/device, not in cloud storage. */
+  storageScope?: 'device';
 }
 
 export interface ColorSuggestion {
