@@ -1946,9 +1946,10 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         // Adapt stabilization to pointer speed: slow sketching keeps jitter reduction,
         // while fast mouse/finger/stylus movement follows the actual pointer immediately.
         const previousRaw = rawPointerBufferRef.current[rawPointerBufferRef.current.length - 1];
-        const elapsedMs = previousRaw
-          ? Math.max(1, ev.timeStamp - (previousRaw as Point & { timeStamp?: number }).timeStamp!)
-          : 1;
+        const previousTime = previousRaw
+          ? (previousRaw as Point & { timeStamp?: number }).timeStamp ?? ev.timeStamp
+          : ev.timeStamp;
+        const elapsedMs = Math.max(1, ev.timeStamp - previousTime);
         const travel = previousRaw
           ? Math.hypot(rawSample.x - previousRaw.x, rawSample.y - previousRaw.y)
           : 0;
