@@ -28,12 +28,16 @@ import {
   getUploadedMedia,
   getUserLocalArtworks,
   getArtworkPreview,
+  saveArtworkPreview,
   saveLocalArtwork,
   deleteLocalArtwork,
 } from './utils/indexedDB';
 import {
   saveArtworkToFirestore,
   extractReadableFirestoreError,
+  getArtworkFromFirestore,
+  getUserCloudArtworks,
+  deleteArtworkFromFirestore,
 } from './firebase/firestore';
 import { AuthModal } from './components/AuthModal';
 import { CloudSaveModal } from './components/CloudSaveModal';
@@ -61,6 +65,7 @@ import {
   getMirrorModeStatusMessage,
 } from './utils/drawing';
 import { mergePaletteIntoCustomColors } from './utils/paletteExtraction';
+import { renderStrokesToPreviewDataUrl } from './utils/previewGenerator';
 import {
   DEFAULT_LAYER_ID,
   addTransparentLayer,
@@ -277,16 +282,32 @@ export default function App() {
     }, 2600);
   }, []);
 
-  // Restore the device-local Studio Gallery from IndexedDB after every app load.
+  // Restore Studio Gallery from local IndexedDB and the signed-in user's Firestore backup.
+  // The local copy keeps Gallery available offline; the cloud copy survives browser storage loss.
   useEffect(() => {
     let cancelled = false;
 
     const restoreGallery = async () => {
+      setIsGalleryLoading(true);
       try {
         const records = await getUserLocalArtworks('device-local');
-        const restored = await Promise.all(
+        const localRestored = await Promise.all(
           records.map(async (record): Promise<SavedArtwork | null> => {
-            const dataUrl = await getArtworkPreview(record.id);
+            let dataUrl = await getArtworkPreview(record.id);
+            // Older or partially cached records may have their editable strokes but no thumbnail.
+            if (!dataUrl) {
+              dataUrl = renderStrokesToPreviewDataUrl(
+                record.editableData?.strokes || [],
+                record.canvasWidth,
+                record.canvasHeight,
+                record.editableData?.layers
+              );
+              if (dataUrl) {
+                await saveArtworkPreview(record.id, dataUrl).catch((error) => {
+                  console.warn('Could not cache restored Studio Gallery preview:', error);
+                });
+              }
+            }
             if (!dataUrl) return null;
             return {
               id: record.id,
@@ -302,20 +323,91 @@ export default function App() {
           })
         );
 
+        let cloudRestored: SavedArtwork[] = [];
+        let cloudIds = new Set<string>();
+        let cloudListLoaded = false;
+
+        if (isAuthReady && currentUser) {
+          try {
+            const cloudRecords = await getUserCloudArtworks(currentUser.uid);
+            cloudListLoaded = true;
+            cloudIds = new Set(cloudRecords.map((record) => record.id));
+
+            const restoredCloud = await Promise.all(
+              cloudRecords.map(async (record): Promise<SavedArtwork | null> => {
+                let dataUrl = await getArtworkPreview(record.id);
+                if (!dataUrl) {
+                  const editableRecord = await getArtworkFromFirestore(currentUser.uid, record.id);
+                  if (editableRecord) {
+                    dataUrl = renderStrokesToPreviewDataUrl(
+                      editableRecord.editableData?.strokes || [],
+                      editableRecord.canvasWidth,
+                      editableRecord.canvasHeight,
+                      editableRecord.editableData?.layers
+                    );
+                    if (dataUrl) {
+                      await saveArtworkPreview(record.id, dataUrl).catch((error) => {
+                        console.warn('Could not cache cloud artwork preview:', error);
+                      });
+                    }
+                  }
+                }
+                if (!dataUrl) return null;
+                return {
+                  id: record.id,
+                  title: record.title,
+                  date: new Date(record.updatedAt || record.createdAt).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }),
+                  dataUrl,
+                  templateName: record.templateName || undefined,
+                  strokesCount: record.strokesCount,
+                };
+              })
+            );
+            cloudRestored = restoredCloud.filter((item): item is SavedArtwork => item !== null);
+          } catch (cloudError) {
+            console.error('Could not restore Studio Gallery cloud backups:', cloudError);
+            if (!cancelled) {
+              showToast('Some cloud Gallery artwork could not be loaded. Your device saves are still available.');
+            }
+          }
+        }
+
         if (!cancelled) {
-          const available = restored.filter((item): item is SavedArtwork => item !== null);
-          // Do not overwrite an artwork saved while the initial IndexedDB read was in progress.
+          const available = [...cloudRestored, ...localRestored].filter(
+            (item): item is SavedArtwork => item !== null
+          );
           setSavedArtworks((current) => {
-            const currentIds = new Set(current.map((item) => item.id));
-            return [
-              ...current,
-              ...available.filter((item) => !currentIds.has(item.id)),
-            ];
+            const merged = new Map<string, SavedArtwork>();
+            for (const item of available) merged.set(item.id, item);
+            // Keep any artwork saved while this restore was running.
+            for (const item of current) merged.set(item.id, item);
+            return [...merged.values()];
           });
+        }
+
+        // Back up older device-only Gallery saves to this account after a successful cloud listing.
+        // Never overwrite a cloud artwork when its existing record is already present.
+        if (cloudListLoaded && currentUser && !cancelled) {
+          for (const record of records) {
+            if (cancelled) return;
+            if (cloudIds.has(record.id)) continue;
+            try {
+              await saveArtworkToFirestore(currentUser.uid, {
+                ...record,
+                userId: currentUser.uid,
+              });
+              cloudIds.add(record.id);
+            } catch (syncError) {
+              console.warn('Could not back up an existing device Gallery save to Firestore:', syncError);
+            }
+          }
         }
       } catch (error) {
         console.error('Could not restore Pixora Studio Gallery:', error);
-        if (!cancelled) showToast('Could not load saved gallery artwork from this device.');
+        if (!cancelled) showToast('Could not load saved Gallery artwork. Please check browser storage and try again.');
       } finally {
         if (!cancelled) setIsGalleryLoading(false);
       }
@@ -325,7 +417,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [showToast]);
+  }, [showToast, currentUser, isAuthReady]);
 
   const handleRecordRecentColor = useCallback((hex: string) => {
     setRecentColors((prev) => recordRecentColor(prev, hex));
@@ -1095,15 +1187,53 @@ export default function App() {
       updatedAt: now,
     };
 
+    let savedLocally = false;
+    let savedToCloud = false;
+    let localSaveError: unknown = null;
+    let cloudSaveError: unknown = null;
+
     try {
-      // Save the project and its preview before showing success in the gallery.
       await saveLocalArtwork(localRecord, artwork.dataUrl);
-      setSavedArtworks((prev) => [artwork, ...prev.filter((item) => item.id !== artwork.id)]);
-      showToast(`Saved "${artwork.title}" on this device`);
+      savedLocally = true;
     } catch (error) {
-      console.error('Pixora Studio Gallery save failed:', error);
-      showToast('Could not save artwork permanently. Please try again.');
-      throw error;
+      localSaveError = error;
+      console.error('Pixora Studio Gallery local save failed:', error);
+    }
+
+    // When signed in, also save the editable project to the user's Firestore account.
+    // A cloud failure must not discard a successfully committed local copy.
+    if (currentUser) {
+      try {
+        await saveArtworkToFirestore(currentUser.uid, {
+          ...localRecord,
+          userId: currentUser.uid,
+        });
+        savedToCloud = true;
+      } catch (error) {
+        cloudSaveError = error;
+        console.error('Pixora Studio Gallery cloud backup failed:', error);
+      }
+    }
+
+    if (!savedLocally && !savedToCloud) {
+      console.error('Pixora Studio Gallery save failed in all available locations:', {
+        localSaveError,
+        cloudSaveError,
+      });
+      showToast('Could not save artwork. Please check your connection and browser storage.');
+      throw localSaveError || cloudSaveError || new Error('No Gallery save location completed.');
+    }
+
+    setSavedArtworks((prev) => [artwork, ...prev.filter((item) => item.id !== artwork.id)]);
+
+    if (savedToCloud && savedLocally) {
+      showToast(`Saved "${artwork.title}" to your Gallery and Pixora account`);
+    } else if (savedToCloud) {
+      showToast(`Saved "${artwork.title}" to your Pixora account`);
+    } else if (currentUser && cloudSaveError) {
+      showToast(`Saved "${artwork.title}" on this device; cloud backup failed`);
+    } else {
+      showToast(`Saved "${artwork.title}" on this device`);
     }
   };
 
@@ -1310,12 +1440,16 @@ export default function App() {
 
   const handleDeleteFromGallery = async (id: string) => {
     try {
+      // Remove the account backup first so a failed cloud delete never looks complete.
+      if (currentUser) {
+        await deleteArtworkFromFirestore(currentUser.uid, id);
+      }
       await deleteLocalArtwork(id);
       setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
-      showToast('Artwork deleted from this device');
+      showToast('Artwork deleted from your Gallery');
     } catch (error) {
       console.error('Could not delete Pixora gallery artwork:', error);
-      showToast('Could not delete artwork. Please try again.');
+      showToast(`Could not delete artwork: ${extractReadableFirestoreError(error)}`);
     }
   };
 

@@ -52,7 +52,7 @@ export const SessionGalleryModal: React.FC<SessionGalleryModalProps> = ({
                 pixora Studio Gallery
               </h2>
               <p className="text-xs text-slate-500">
-                {artworks.length} saved artwork{artworks.length === 1 ? '' : 's'} on this device
+                {artworks.length} saved artwork{artworks.length === 1 ? '' : 's'}
               </p>
             </div>
           </div>
