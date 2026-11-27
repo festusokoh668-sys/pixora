@@ -26,6 +26,10 @@ import {
   updateLocalArtworkMetadata,
   saveUploadedMedia,
   getUploadedMedia,
+  getUserLocalArtworks,
+  getArtworkPreview,
+  saveLocalArtwork,
+  deleteLocalArtwork,
 } from './utils/indexedDB';
 import {
   saveArtworkToFirestore,
@@ -199,6 +203,7 @@ export default function App() {
 
   // Saved Artworks (Session Gallery)
   const [savedArtworks, setSavedArtworks] = useState<SavedArtwork[]>([]);
+  const [isGalleryLoading, setIsGalleryLoading] = useState<boolean>(true);
 
   // Modals & Cloud State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -271,6 +276,56 @@ export default function App() {
       setToastMessage(null);
     }, 2600);
   }, []);
+
+  // Restore the device-local Studio Gallery from IndexedDB after every app load.
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreGallery = async () => {
+      try {
+        const records = await getUserLocalArtworks('device-local');
+        const restored = await Promise.all(
+          records.map(async (record): Promise<SavedArtwork | null> => {
+            const dataUrl = await getArtworkPreview(record.id);
+            if (!dataUrl) return null;
+            return {
+              id: record.id,
+              title: record.title,
+              date: new Date(record.updatedAt || record.createdAt).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+              dataUrl,
+              templateName: record.templateName || undefined,
+              strokesCount: record.strokesCount,
+            };
+          })
+        );
+
+        if (!cancelled) {
+          const available = restored.filter((item): item is SavedArtwork => item !== null);
+          // Do not overwrite an artwork saved while the initial IndexedDB read was in progress.
+          setSavedArtworks((current) => {
+            const currentIds = new Set(current.map((item) => item.id));
+            return [
+              ...current,
+              ...available.filter((item) => !currentIds.has(item.id)),
+            ];
+          });
+        }
+      } catch (error) {
+        console.error('Could not restore Pixora Studio Gallery:', error);
+        if (!cancelled) showToast('Could not load saved gallery artwork from this device.');
+      } finally {
+        if (!cancelled) setIsGalleryLoading(false);
+      }
+    };
+
+    void restoreGallery();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
 
   const handleRecordRecentColor = useCallback((hex: string) => {
     setRecentColors((prev) => recordRecentColor(prev, hex));
@@ -1011,9 +1066,45 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  const handleSaveToGallery = (artwork: SavedArtwork) => {
-    setSavedArtworks((prev) => [artwork, ...prev]);
-    showToast(`Saved "${artwork.title}"!`);
+  const handleSaveToGallery = async (artwork: SavedArtwork) => {
+    const now = new Date().toISOString();
+    const localRecord: LocalArtworkRecord = {
+      id: artwork.id,
+      userId: 'device-local',
+      title: artwork.title,
+      description: '',
+      canvasWidth: canvasDimensions.width,
+      canvasHeight: canvasDimensions.height,
+      strokesCount: strokes.length,
+      templateId: activeTemplate && !activeTemplate.id.startsWith('custom_') ? activeTemplate.id : '',
+      templateName: activeTemplate?.name || '',
+      difficulty: activeTemplate?.difficulty || '',
+      isCustomTemplate: Boolean(activeTemplate?.id.startsWith('custom_')),
+      editableData: {
+        canvasWidth: canvasDimensions.width,
+        canvasHeight: canvasDimensions.height,
+        strokes,
+        layers,
+        activeLayerId,
+        template: activeTemplate && !activeTemplate.id.startsWith('custom_') ? activeTemplate : null,
+        templateOpacity,
+        zoomLevel,
+      },
+      syncStatus: 'local_only',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      // Save the project and its preview before showing success in the gallery.
+      await saveLocalArtwork(localRecord, artwork.dataUrl);
+      setSavedArtworks((prev) => [artwork, ...prev.filter((item) => item.id !== artwork.id)]);
+      showToast(`Saved "${artwork.title}" on this device`);
+    } catch (error) {
+      console.error('Pixora Studio Gallery save failed:', error);
+      showToast('Could not save artwork permanently. Please try again.');
+      throw error;
+    }
   };
 
   const handleExportFormat = (format: 'jpg' | 'png' | 'svg') => {
@@ -1109,24 +1200,14 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
 
-      // Persist PNG directly into local downloads/ folder via backend endpoint
-      const response = await fetch('/api/quick-save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageDataUrl: pngDataUrl, filename }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const result = (await response.json()) as { filename?: string; relativePath?: string };
-      const savedName = result.filename || filename;
-      setLastQuickSaveFile(savedName);
-      showToast(`Quick Saved: ${result.relativePath || `downloads/${savedName}`}`);
+      // The browser owns the user's Downloads folder; Vercel does not provide
+      // a persistent writable project folder for this client-side action.
+      setLastQuickSaveFile(filename);
+      showToast(`Downloaded ${filename}`);
+    
     } catch (err) {
       console.error('Quick Save failed:', err);
-      showToast('Quick Save failed writing to downloads folder');
+      showToast('Quick Save could not export the canvas. Please try again.');
     } finally {
       setIsQuickSaving(false);
     }
@@ -1227,9 +1308,15 @@ export default function App() {
     }
   };
 
-  const handleDeleteFromGallery = (id: string) => {
-    setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
-    showToast('Artwork removed from session');
+  const handleDeleteFromGallery = async (id: string) => {
+    try {
+      await deleteLocalArtwork(id);
+      setSavedArtworks((prev) => prev.filter((a) => a.id !== id));
+      showToast('Artwork deleted from this device');
+    } catch (error) {
+      console.error('Could not delete Pixora gallery artwork:', error);
+      showToast('Could not delete artwork. Please try again.');
+    }
   };
 
   return (
@@ -1437,6 +1524,7 @@ export default function App() {
             user={currentUser}
             onOpenAuth={handleOpenAuth}
             onSaveToCloud={handleOpenCloudSave}
+            onOpenStudioGallery={() => setIsGalleryModalOpen(true)}
             onOpenCloudGallery={handleOpenCloudGallery}
             hasUnsavedChanges={hasUnsavedChanges}
             currentArtworkTitle={currentCloudArtworkTitle}
@@ -1621,6 +1709,7 @@ export default function App() {
             layers={layers}
             activeTemplate={activeTemplate}
             onSaveToGallery={handleSaveToGallery}
+            onOpenGallery={() => setIsGalleryModalOpen(true)}
             canvasDimensions={canvasDimensions}
           />
 
@@ -1631,6 +1720,7 @@ export default function App() {
             artworks={savedArtworks}
             onDeleteArtwork={handleDeleteFromGallery}
             onOpenCanvas={() => setIsGalleryModalOpen(false)}
+            isLoading={isGalleryLoading}
           />
 
           {/* Creative Spark / Tips Modal */}

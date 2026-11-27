@@ -27,7 +27,8 @@ interface SaveArtworkModalProps {
   strokes: Stroke[];
   layers?: CanvasLayer[];
   activeTemplate: DrawingTemplate | null;
-  onSaveToGallery: (artwork: SavedArtwork) => void;
+  onSaveToGallery: (artwork: SavedArtwork) => Promise<void> | void;
+  onOpenGallery?: () => void;
   canvasDimensions?: { width: number; height: number };
 }
 
@@ -38,6 +39,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   layers,
   activeTemplate,
   onSaveToGallery,
+  onOpenGallery,
   canvasDimensions = { width: 1200, height: 1200 },
 }) => {
   const orderedStrokes = React.useMemo(
@@ -50,6 +52,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'svg'>('png');
   const [pngResolution, setPngResolution] = useState<1 | 2 | 4>(2); // Default to 2x (2400x2400 High-Res)
   const [isSavedSuccessfully, setIsSavedSuccessfully] = useState<boolean>(false);
+  const [isSavingToGallery, setIsSavingToGallery] = useState<boolean>(false);
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
 
   const templateImgRef = useRef<HTMLImageElement | null>(null);
@@ -58,6 +61,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setIsSavedSuccessfully(false);
+      setIsSavingToGallery(false);
       setShareFeedback(null);
       const defaultTitle = activeTemplate
         ? `pixora ${activeTemplate.name}`
@@ -198,7 +202,7 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
     });
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (exportFormat === 'svg') {
       const svgString = getSvgString();
       const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
@@ -233,10 +237,25 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       templateName: activeTemplate ? activeTemplate.name : undefined,
       strokesCount: strokes.length,
     };
-    onSaveToGallery(artwork);
 
-    setIsSavedSuccessfully(true);
-    triggerConfetti();
+    if (!previewDataUrl) {
+      setShareFeedback('The file was downloaded, but the preview is not ready to save to your Gallery yet.');
+      return;
+    }
+
+    setIsSavingToGallery(true);
+    setIsSavedSuccessfully(false);
+    setShareFeedback(null);
+    try {
+      await onSaveToGallery(artwork);
+      setIsSavedSuccessfully(true);
+      triggerConfetti();
+    } catch (error) {
+      console.error('Could not save exported artwork to Pixora Gallery:', error);
+      setShareFeedback('The file was downloaded, but Pixora could not save a Gallery copy. Please try again.');
+    } finally {
+      setIsSavingToGallery(false);
+    }
   };
 
   const handleCopySvgCode = async () => {
@@ -281,8 +300,8 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
     setTimeout(() => setShareFeedback(null), 3000);
   };
 
-  const handleSaveToGalleryOnly = () => {
-    if (!previewDataUrl) return;
+  const handleSaveToGalleryOnly = async () => {
+    if (!previewDataUrl || isSavingToGallery) return;
 
     const artwork: SavedArtwork = {
       id: `art_${Date.now()}`,
@@ -292,10 +311,22 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       templateName: activeTemplate ? activeTemplate.name : undefined,
       strokesCount: strokes.length,
     };
-    onSaveToGallery(artwork);
 
-    setIsSavedSuccessfully(true);
-    triggerConfetti();
+    setIsSavingToGallery(true);
+    setIsSavedSuccessfully(false);
+    setShareFeedback(null);
+    try {
+      await onSaveToGallery(artwork);
+      setIsSavedSuccessfully(true);
+      triggerConfetti();
+      onClose();
+      onOpenGallery?.();
+    } catch (error) {
+      console.error('Could not save artwork to Pixora Gallery:', error);
+      setShareFeedback('Could not save this artwork to your Gallery. Please try again.');
+    } finally {
+      setIsSavingToGallery(false);
+    }
   };
 
   // Safe link sharing that never breaks
@@ -516,14 +547,9 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
             <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-2.5 animate-in fade-in duration-200">
               <Check className="w-5 h-5 text-emerald-600 shrink-0" />
               <div>
-                <p className="font-bold text-xs">Artwork Exported Successfully!</p>
+                <p className="font-bold text-xs">Artwork Saved Successfully!</p>
                 <p className="text-[11px] text-emerald-700">
-                  {exportFormat === 'png'
-                    ? 'High-res PNG'
-                    : exportFormat === 'jpg'
-                      ? 'JPEG Image'
-                      : 'Vector SVG'}{' '}
-                  file downloaded to your device.
+                  A copy is stored in your Studio Gallery on this device and will remain there after you refresh Pixora.
                 </p>
               </div>
             </div>
@@ -574,11 +600,12 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
 
           <button
             onClick={handleSaveToGalleryOnly}
-            className="w-full sm:w-auto py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            title="Add snapshot to temporary session history (use Save Artwork for cloud/local persistence)"
+            disabled={!previewDataUrl || isSavingToGallery}
+            className="w-full sm:w-auto py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            title="Save a persistent copy in your Studio Gallery on this device"
           >
             <BookmarkPlus className="w-4 h-4 text-slate-600" />
-            <span>Gallery</span>
+            <span>{isSavingToGallery ? 'Saving…' : 'Gallery'}</span>
           </button>
         </div>
       </div>

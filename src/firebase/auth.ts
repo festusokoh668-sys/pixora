@@ -101,6 +101,13 @@ export const formatAuthError = (err: unknown): string => {
   const message = (err as Error)?.message || String(err);
 
   switch (code) {
+    case 'auth/unauthorized-domain': {
+      const hostname =
+        typeof window !== 'undefined' && window.location?.hostname
+          ? window.location.hostname
+          : 'the current website domain';
+      return `Firebase has not authorized this website for sign-in. In Firebase Console, open Authentication → Settings → Authorized domains and add: ${hostname}`;
+    }
     case 'auth/invalid-email':
       return 'The email address is invalid. Please check and try again.';
     case 'auth/user-disabled':
