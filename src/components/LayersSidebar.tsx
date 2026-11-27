@@ -17,6 +17,7 @@ import {
   groupStrokesByLayer,
 } from '../utils/layers';
 import { renderStrokeToContext } from '../utils/drawing';
+import { applyLayerFilterToContext } from '../utils/filters';
 
 interface LayerThumbnailProps {
   strokes: Stroke[];
@@ -49,13 +50,53 @@ const LayerThumbnail: React.FC<LayerThumbnailProps> = ({
     const ox = (tw - cw * scale) / 2;
     const oy = (th - ch * scale) / 2;
 
-    ctx.save();
-    ctx.translate(ox, oy);
-    ctx.scale(scale, scale);
-    for (const s of strokes) {
-      renderStrokeToContext(ctx, s, 'canvas');
+    const hasEnabledFilter = strokes.some(
+      (s) => s.operation === 'layer-filter' && s.filterEnabled !== false && Boolean(s.filterType)
+    );
+
+    if (!hasEnabledFilter) {
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(scale, scale);
+      for (const s of strokes) {
+        if (s.operation === 'layer-filter') continue;
+        renderStrokeToContext(ctx, s, 'canvas');
+      }
+      ctx.restore();
+      return;
     }
-    ctx.restore();
+
+    const work = document.createElement('canvas');
+    work.width = tw;
+    work.height = th;
+    const wctx = work.getContext('2d', { willReadFrequently: true });
+    if (!wctx) return;
+
+    const scratch = document.createElement('canvas');
+    scratch.width = tw;
+    scratch.height = th;
+    const sctx = scratch.getContext('2d', { willReadFrequently: true });
+
+    for (const s of strokes) {
+      if (s.operation === 'layer-filter') {
+        if (s.filterEnabled !== false && s.filterType && sctx) {
+          sctx.clearRect(0, 0, tw, th);
+          sctx.drawImage(work, 0, 0);
+          applyLayerFilterToContext(wctx, scratch, tw, th, s.filterType, {
+            brightnessDelta: s.filterBrightnessDelta,
+            opaquePaperBackground: s.filterOpaquePaperBackground,
+          });
+        }
+        continue;
+      }
+      wctx.save();
+      wctx.translate(ox, oy);
+      wctx.scale(scale, scale);
+      renderStrokeToContext(wctx, s, 'canvas');
+      wctx.restore();
+    }
+
+    ctx.drawImage(work, 0, 0);
   }, [strokes, canvasDimensions.width, canvasDimensions.height]);
 
   return (
@@ -301,9 +342,13 @@ export const LayersSidebar: React.FC<LayersSidebarProps> = ({
                       {layer.name}
                     </div>
                     <div className="text-[10px] text-[#5F6874] leading-tight mt-0.5 tabular-nums truncate">
-                      {!layer.visible
-                        ? 'Hidden'
-                        : `${layerStrokes.length} ${layerStrokes.length === 1 ? 'item' : 'items'}`}
+                      {(() => {
+                        if (!layer.visible) return 'Hidden';
+                        const drawableCount = layerStrokes.filter(
+                          (s) => s.operation !== 'layer-filter'
+                        ).length;
+                        return `${drawableCount} ${drawableCount === 1 ? 'item' : 'items'}`;
+                      })()}
                       {layer.opacity < 1 ? ` · ${Math.round(layer.opacity * 100)}%` : ''}
                     </div>
                   </div>

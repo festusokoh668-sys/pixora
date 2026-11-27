@@ -115,10 +115,29 @@ export interface Stroke {
   text?: string;
   fontSize?: number;
   fontFamily?: string;
-  // Selection / clipboard / raster operations (undoable via HistoryManager)
-  operation?: 'erase-rect' | 'paste-image' | 'replace-bitmap';
+  // Selection / clipboard / raster / layer filter operations (undoable via HistoryManager)
+  operation?: 'erase-rect' | 'paste-image' | 'replace-bitmap' | 'layer-filter';
   rect?: RectBounds;
   rasterDataUrl?: string;
+  filterType?: LayerFilterType;
+  filterBrightnessDelta?: number;
+  filterOpaquePaperBackground?: boolean;
+  filterEnabled?: boolean;
+  filterAppliedAt?: number;
+  filterLayerName?: string;
+}
+
+export interface FilterHistoryEntry {
+  id: string;
+  layerId: string;
+  layerName: string;
+  filter: LayerFilterType;
+  label: string;
+  brightnessDelta?: number;
+  opaquePaperBackground?: boolean;
+  enabled: boolean;
+  appliedAt: number;
+  orderIndex: number;
 }
 
 export type TemplateCategory =

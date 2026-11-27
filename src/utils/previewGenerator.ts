@@ -5,6 +5,8 @@
 
 import { Stroke, CanvasLayer } from '../types';
 import { renderStrokeToContext } from './drawing';
+import { createInitialLayers } from './layers';
+import { renderLayeredArtworkToContext } from './filterHistory';
 
 /**
  * Creates a lightweight thumbnail dataURL from a full-size canvas or dataURL
@@ -95,16 +97,15 @@ export function renderStrokesToPreviewDataUrl(
     ctx.save();
     ctx.scale(scale, scale);
 
-    // If layers are present, filter visible strokes
-    let orderedStrokes = strokes;
-    if (layers && layers.length > 0) {
-      const visibleLayerIds = new Set(layers.filter((l) => l.visible).map((l) => l.id));
-      orderedStrokes = strokes.filter((s) => !s.layerId || visibleLayerIds.has(s.layerId));
-    }
-
-    for (const stroke of orderedStrokes) {
-      renderStrokeToContext(ctx, stroke);
-    }
+    const safeLayers = layers && layers.length > 0 ? layers : createInitialLayers();
+    renderLayeredArtworkToContext(
+      ctx,
+      strokes,
+      safeLayers,
+      canvasWidth,
+      canvasHeight,
+      (targetCtx, stroke) => renderStrokeToContext(targetCtx, stroke)
+    );
 
     ctx.restore();
 

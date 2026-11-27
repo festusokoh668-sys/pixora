@@ -9,6 +9,7 @@ import {
 } from './color';
 import { renderShapeToContext, shapeToSvgPathData } from './shapes';
 import { applyGaussianBlurStrokeToContext, getBlurBrushStrokeWidth } from './blur';
+import { buildSvgFilterDef } from './filterHistory';
 
 export interface PaintColorPalette {
   baseColor: string;
@@ -1822,13 +1823,39 @@ export function exportStrokesToSvgString(
 
   elements += `  <!-- User Artwork Strokes -->\n`;
 
+  let currentLayerKey: string | null = null;
+  let layerElements = '';
+  let svgFilterSeq = 0;
+
   for (let i = 0; i < strokes.length; i++) {
     const stroke = strokes[i];
+    const strokeLayerKey = stroke.layerId || '__default__';
+    if (currentLayerKey !== null && strokeLayerKey !== currentLayerKey) {
+      elements += layerElements;
+      layerElements = '';
+    }
+    currentLayerKey = strokeLayerKey;
+
+    if (stroke.operation === 'layer-filter') {
+      if (stroke.filterEnabled !== false && stroke.filterType) {
+        const filterDefId = `pixora_filter_${++svgFilterSeq}`;
+        defs += buildSvgFilterDef(
+          filterDefId,
+          stroke.filterType,
+          stroke.filterBrightnessDelta
+        );
+        if (stroke.filterOpaquePaperBackground && stroke.filterType === 'invert') {
+          layerElements = `  <rect width="${width}" height="${height}" fill="#FFFFFF" />\n${layerElements}`;
+        }
+        layerElements = `  <g filter="url(#${filterDefId})">\n${layerElements}  </g>\n`;
+      }
+      continue;
+    }
 
     // Rectangular cut/erase patches
     if (stroke.operation === 'erase-rect' && stroke.rect) {
       const { x, y, width: rw, height: rh } = stroke.rect;
-      elements += `  <rect x="${x}" y="${y}" width="${rw}" height="${rh}" fill="${stroke.fillColor || '#FFFFFF'}" />\n`;
+      layerElements += `  <rect x="${x}" y="${y}" width="${rw}" height="${rh}" fill="${stroke.fillColor || '#FFFFFF'}" />\n`;
       continue;
     }
 
@@ -1840,7 +1867,7 @@ export function exportStrokesToSvgString(
     ) {
       const { x, y, width: rw, height: rh } = stroke.rect;
       const op = stroke.opacity ?? 1;
-      elements += `  <image href="${stroke.rasterDataUrl}" x="${x}" y="${y}" width="${rw}" height="${rh}" preserveAspectRatio="none" opacity="${op}" />\n`;
+      layerElements += `  <image href="${stroke.rasterDataUrl}" x="${x}" y="${y}" width="${rw}" height="${rh}" preserveAspectRatio="none" opacity="${op}" />\n`;
       continue;
     }
 
@@ -1854,14 +1881,14 @@ export function exportStrokesToSvgString(
       const lines = stroke.text.split('\n');
       const lineHeight = fontSize * 1.25;
       if (lines.length === 1) {
-        elements += `  <text x="${pt.x}" y="${pt.y + fontSize}" fill="${stroke.color}" font-family="${fontFamily}" font-size="${fontSize}" opacity="${stroke.opacity}">${escapeXmlText(lines[0])}</text>\n`;
+        layerElements += `  <text x="${pt.x}" y="${pt.y + fontSize}" fill="${stroke.color}" font-family="${fontFamily}" font-size="${fontSize}" opacity="${stroke.opacity}">${escapeXmlText(lines[0])}</text>\n`;
       } else {
-        elements += `  <text x="${pt.x}" y="${pt.y + fontSize}" fill="${stroke.color}" font-family="${fontFamily}" font-size="${fontSize}" opacity="${stroke.opacity}">`;
+        layerElements += `  <text x="${pt.x}" y="${pt.y + fontSize}" fill="${stroke.color}" font-family="${fontFamily}" font-size="${fontSize}" opacity="${stroke.opacity}">`;
         lines.forEach((line, idx) => {
           const dy = idx === 0 ? 0 : lineHeight;
-          elements += `<tspan x="${pt.x}" dy="${dy}">${escapeXmlText(line)}</tspan>`;
+          layerElements += `<tspan x="${pt.x}" dy="${dy}">${escapeXmlText(line)}</tspan>`;
         });
-        elements += `</text>\n`;
+        layerElements += `</text>\n`;
       }
       continue;
     }
@@ -1894,7 +1921,7 @@ export function exportStrokesToSvgString(
         const by = Math.round(((minY + maxY) / 2) * 10) / 10;
         transformAttr = ` transform="translate(${bx} ${by}) scale(${stroke.flipH ? -1 : 1} ${stroke.flipV ? -1 : 1}) translate(${-bx} ${-by})"`;
       }
-      elements += `  <path d="${d}" ${fillAttr} ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" opacity="${stroke.opacity}"${transformAttr} />\n`;
+      layerElements += `  <path d="${d}" ${fillAttr} ${strokeAttr} stroke-linecap="round" stroke-linejoin="round" opacity="${stroke.opacity}"${transformAttr} />\n`;
       continue;
     }
 
@@ -1909,7 +1936,7 @@ export function exportStrokesToSvgString(
             ? interpolateHexColors(stroke.color, stroke.colorEnd, idx / total)
             : stroke.color;
         const d = stampShapeToSvgPathData(stampShape, mark.x, mark.y, mark.radius);
-        elements += `  <path d="${d}" fill="${fillHex}" stroke="${getPaintColorPalette(fillHex).shadowColor}" stroke-width="${Math.max(1, Math.round(mark.radius * 0.08 * 10) / 10)}" opacity="${stroke.opacity}" />\n`;
+        layerElements += `  <path d="${d}" fill="${fillHex}" stroke="${getPaintColorPalette(fillHex).shadowColor}" stroke-width="${Math.max(1, Math.round(mark.radius * 0.08 * 10) / 10)}" opacity="${stroke.opacity}" />\n`;
       });
       continue;
     }
@@ -1979,34 +2006,36 @@ export function exportStrokesToSvgString(
       const radius = strokeWidth / 2;
       if (stroke.tool === 'brush') {
         // Physical paint dollop
-        elements += `  <!-- Impasto Shadow Drop -->\n  <circle cx="${pt.x + 1}" cy="${pt.y + 1.2}" r="${radius}" fill="rgba(15,23,42,0.18)" opacity="${opacity * 0.5}" />\n`;
-        elements += `  <circle cx="${pt.x}" cy="${pt.y}" r="${radius}" fill="${strokeColor}" opacity="${opacity}" />\n`;
-        elements += `  <!-- Specular Reflection -->\n  <circle cx="${pt.x - radius * 0.3}" cy="${pt.y - radius * 0.3}" r="${radius * 0.4}" fill="${palette.glossCrest}" opacity="${opacity * 0.6}" />\n`;
+        layerElements += `  <!-- Impasto Shadow Drop -->\n  <circle cx="${pt.x + 1}" cy="${pt.y + 1.2}" r="${radius}" fill="rgba(15,23,42,0.18)" opacity="${opacity * 0.5}" />\n`;
+        layerElements += `  <circle cx="${pt.x}" cy="${pt.y}" r="${radius}" fill="${strokeColor}" opacity="${opacity}" />\n`;
+        layerElements += `  <!-- Specular Reflection -->\n  <circle cx="${pt.x - radius * 0.3}" cy="${pt.y - radius * 0.3}" r="${radius * 0.4}" fill="${palette.glossCrest}" opacity="${opacity * 0.6}" />\n`;
       } else {
-        elements += `  <circle cx="${pt.x}" cy="${pt.y}" r="${radius}" fill="${strokeColor}" opacity="${opacity}" />\n`;
+        layerElements += `  <circle cx="${pt.x}" cy="${pt.y}" r="${radius}" fill="${strokeColor}" opacity="${opacity}" />\n`;
       }
     } else {
       const d = strokePointsToSvgPath(stroke.points);
 
       if (stroke.tool === 'brush') {
         // 1. Impasto Shadow Path
-        elements += `  <!-- 3D Impasto Shadow -->\n  <path d="${d}" fill="none" stroke="rgba(15,23,42,0.18)" stroke-width="${strokeWidth * 1.05}" transform="translate(1, 1.2)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.35}" />\n`;
+        layerElements += `  <!-- 3D Impasto Shadow -->\n  <path d="${d}" fill="none" stroke="rgba(15,23,42,0.18)" stroke-width="${strokeWidth * 1.05}" transform="translate(1, 1.2)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.35}" />\n`;
         // 2. Viscous Base Paint Body Path
-        elements += `  <path d="${d}" fill="none" ${bodyStrokeAttr} stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" />\n`;
+        layerElements += `  <path d="${d}" fill="none" ${bodyStrokeAttr} stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" />\n`;
         // 3. Longitudinal Bristle Striations
         if (stroke.size >= 3) {
-          elements += `  <path d="${d}" fill="none" stroke="${palette.bristleDark}" stroke-width="${strokeWidth * 0.35}" transform="translate(0.5, 0.5)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.3}" />\n`;
-          elements += `  <path d="${d}" fill="none" stroke="${palette.bristleLight}" stroke-width="${strokeWidth * 0.38}" transform="translate(-0.5, -0.5)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.32}" />\n`;
+          layerElements += `  <path d="${d}" fill="none" stroke="${palette.bristleDark}" stroke-width="${strokeWidth * 0.35}" transform="translate(0.5, 0.5)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.3}" />\n`;
+          layerElements += `  <path d="${d}" fill="none" stroke="${palette.bristleLight}" stroke-width="${strokeWidth * 0.38}" transform="translate(-0.5, -0.5)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.32}" />\n`;
         }
         // 4. Wet Specular Gloss Crest
         if (stroke.size >= 2) {
-          elements += `  <path d="${d}" fill="none" stroke="${palette.glossCrest}" stroke-width="${strokeWidth * 0.28}" transform="translate(-0.4, -0.6)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.42}" />\n`;
+          layerElements += `  <path d="${d}" fill="none" stroke="${palette.glossCrest}" stroke-width="${strokeWidth * 0.28}" transform="translate(-0.4, -0.6)" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity * 0.42}" />\n`;
         }
       } else {
-        elements += `  <path d="${d}" fill="none" ${bodyStrokeAttr} stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" />\n`;
+        layerElements += `  <path d="${d}" fill="none" ${bodyStrokeAttr} stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" />\n`;
       }
     }
   }
+
+  elements += layerElements;
 
   // Watermark
   if (includeWatermark) {

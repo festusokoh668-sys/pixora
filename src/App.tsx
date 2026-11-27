@@ -11,6 +11,7 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { CanvasStudio, CanvasStudioHandle } from './components/CanvasStudio';
 import { TemplateModal } from './components/TemplateModal';
 import { SaveArtworkModal } from './components/SaveArtworkModal';
+import { ExportPreviewModal } from './components/ExportPreviewModal';
 import { SessionGalleryModal } from './components/SessionGalleryModal';
 import { CreativeSparkModal } from './components/CreativeSparkModal';
 import { ClearConfirmModal } from './components/ClearConfirmModal';
@@ -103,6 +104,13 @@ import {
   isAbortError,
   isWebShareSupported,
 } from './utils/share';
+import {
+  extractFilterHistory,
+  formatFilterHistoryLabel,
+  removeFilterFromStrokes,
+  renderLayeredArtworkToContext,
+  toggleFilterInStrokes,
+} from './utils/filterHistory';
 
 export default function App() {
   // Navigation / View State: Welcome Page as front page
@@ -133,7 +141,7 @@ export default function App() {
   }, []);
 
   // Drawing Tools & Windows Paint Ribbon State
-  const [ribbonTab, setRibbonTab] = useState<'file' | 'home' | 'view'>('home');
+  const [ribbonTab, setRibbonTab] = useState<'file' | 'home' | 'view' | 'save'>('home');
   const [isRibbonOpen, setIsRibbonOpen] = useState<boolean>(true);
   const [isRibbonPinned, setIsRibbonPinned] = useState<boolean>(true);
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('none');
@@ -229,6 +237,7 @@ export default function App() {
 
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState<boolean>(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
+  const [isExportPreviewOpen, setIsExportPreviewOpen] = useState<boolean>(false);
   const [isGalleryModalOpen, setIsGalleryModalOpen] = useState<boolean>(false);
   const [isSparkModalOpen, setIsSparkModalOpen] = useState<boolean>(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState<boolean>(false);
@@ -506,6 +515,34 @@ export default function App() {
     }
   };
 
+  const filterHistory = React.useMemo(
+    () => extractFilterHistory(strokes, layers),
+    [strokes, layers]
+  );
+
+  const handleToggleFilterHistory = (filterId: string) => {
+    const { strokes: nextStrokes, toggled, nextEnabled } = toggleFilterInStrokes(
+      strokes,
+      filterId
+    );
+    if (!toggled) return;
+    handleStrokesChange(nextStrokes);
+    const label = toggled.filterType
+      ? formatFilterHistoryLabel(toggled.filterType, toggled.filterBrightnessDelta)
+      : 'filter';
+    showToast(`${nextEnabled ? 'Enabled' : 'Bypassed'} ${label}`);
+  };
+
+  const handleUndoFilterHistory = (filterId: string) => {
+    const { strokes: nextStrokes, removed } = removeFilterFromStrokes(strokes, filterId);
+    if (!removed) return;
+    handleStrokesChange(nextStrokes);
+    const label = removed.filterType
+      ? formatFilterHistoryLabel(removed.filterType, removed.filterBrightnessDelta)
+      : 'filter';
+    showToast(`Undid ${label} filter`);
+  };
+
   const handleAddLayer = () => {
     const { layers: nextLayers, newLayer } = addTransparentLayer(layers, {
       afterLayerId: activeLayerId,
@@ -608,7 +645,6 @@ export default function App() {
   const getCanvasExportDataUrl = useCallback((): string | null => {
     let dataUrl = canvasStudioRef.current?.exportRaster('png', 1.0) ?? null;
     if (!dataUrl) {
-      const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
       const fallbackCanvas = document.createElement('canvas');
       fallbackCanvas.width = Math.max(1, canvasDimensions.width);
       fallbackCanvas.height = Math.max(1, canvasDimensions.height);
@@ -616,9 +652,14 @@ export default function App() {
       if (fctx) {
         fctx.fillStyle = '#FFFFFF';
         fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-        for (const s of visibleOrderedStrokes) {
-          renderStrokeToContext(fctx, s, 'export');
-        }
+        renderLayeredArtworkToContext(
+          fctx,
+          strokes,
+          layers,
+          fallbackCanvas.width,
+          fallbackCanvas.height,
+          (ctx, s) => renderStrokeToContext(ctx, s, 'export')
+        );
         dataUrl = fallbackCanvas.toDataURL('image/png', 1.0);
       }
     }
@@ -925,9 +966,14 @@ export default function App() {
       if (sctx) {
         sctx.fillStyle = '#FFFFFF';
         sctx.fillRect(0, 0, src.width, src.height);
-        for (const s of strokes) {
-          renderStrokeToContext(sctx, s, 'canvas');
-        }
+        renderLayeredArtworkToContext(
+          sctx,
+          strokes,
+          layers,
+          src.width,
+          src.height,
+          (ctx, s) => renderStrokeToContext(ctx, s, 'canvas')
+        );
         const dst = document.createElement('canvas');
         dst.width = newWidth;
         dst.height = newHeight;
@@ -988,6 +1034,7 @@ export default function App() {
       const hasOpenModal =
         isTemplateModalOpen ||
         isSaveModalOpen ||
+        isExportPreviewOpen ||
         isCloudSaveModalOpen ||
         isCloudGalleryOpen ||
         isAuthModalOpen ||
@@ -1002,6 +1049,7 @@ export default function App() {
           e.preventDefault();
           setIsTemplateModalOpen(false);
           setIsSaveModalOpen(false);
+          setIsExportPreviewOpen(false);
           setIsCloudSaveModalOpen(false);
           setIsCloudGalleryOpen(false);
           setIsAuthModalOpen(false);
@@ -1272,9 +1320,14 @@ export default function App() {
       if (fctx) {
         fctx.fillStyle = '#FFFFFF';
         fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-        for (const s of visibleOrderedStrokes) {
-          renderStrokeToContext(fctx, s, 'export');
-        }
+        renderLayeredArtworkToContext(
+          fctx,
+          strokes,
+          layers,
+          fallbackCanvas.width,
+          fallbackCanvas.height,
+          (ctx, s) => renderStrokeToContext(ctx, s, 'export')
+        );
         dataUrl = fallbackCanvas.toDataURL(
           format === 'jpg' ? 'image/jpeg' : 'image/png',
           0.92
@@ -1299,7 +1352,6 @@ export default function App() {
     try {
       const baseTitle = activeTemplate ? `Pixora ${activeTemplate.name}` : 'Pixora';
       const filename = generateTimestampedPngFilename(baseTitle);
-      const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
 
       let pngDataUrl = canvasStudioRef.current?.exportRaster('png', 1.0) ?? null;
       if (!pngDataUrl) {
@@ -1310,9 +1362,14 @@ export default function App() {
         if (fctx) {
           fctx.fillStyle = '#FFFFFF';
           fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-          for (const s of visibleOrderedStrokes) {
-            renderStrokeToContext(fctx, s, 'export');
-          }
+          renderLayeredArtworkToContext(
+            fctx,
+            strokes,
+            layers,
+            fallbackCanvas.width,
+            fallbackCanvas.height,
+            (ctx, s) => renderStrokeToContext(ctx, s, 'export')
+          );
           pngDataUrl = fallbackCanvas.toDataURL('image/png', 1.0);
         }
       }
@@ -1358,7 +1415,6 @@ export default function App() {
       // Export canvas as PNG
       let pngDataUrl = canvasStudioRef.current?.exportRaster('png', 1.0) ?? null;
       if (!pngDataUrl) {
-        const visibleOrderedStrokes = getVisibleOrderedStrokes(strokes, layers);
         const fallbackCanvas = document.createElement('canvas');
         fallbackCanvas.width = Math.max(1, canvasDimensions.width);
         fallbackCanvas.height = Math.max(1, canvasDimensions.height);
@@ -1366,9 +1422,14 @@ export default function App() {
         if (fctx) {
           fctx.fillStyle = '#FFFFFF';
           fctx.fillRect(0, 0, fallbackCanvas.width, fallbackCanvas.height);
-          for (const s of visibleOrderedStrokes) {
-            renderStrokeToContext(fctx, s, 'export');
-          }
+          renderLayeredArtworkToContext(
+            fctx,
+            strokes,
+            layers,
+            fallbackCanvas.width,
+            fallbackCanvas.height,
+            (ctx, s) => renderStrokeToContext(ctx, s, 'export')
+          );
           pngDataUrl = fallbackCanvas.toDataURL('image/png', 1.0);
         }
       }
@@ -1653,6 +1714,9 @@ export default function App() {
             onApplyGrayscale={() => canvasStudioRef.current?.applyGrayscaleFilter()}
             onApplySepia={() => canvasStudioRef.current?.applySepiaFilter()}
             onApplyBrightness={(delta) => canvasStudioRef.current?.applyBrightnessFilter(delta)}
+            filterHistory={filterHistory}
+            onToggleFilterHistory={handleToggleFilterHistory}
+            onUndoFilterHistory={handleUndoFilterHistory}
             themeMode={themeMode}
             onToggleTheme={handleToggleTheme}
             user={currentUser}
@@ -1662,6 +1726,8 @@ export default function App() {
             onOpenCloudGallery={handleOpenCloudGallery}
             hasUnsavedChanges={hasUnsavedChanges}
             currentArtworkTitle={currentCloudArtworkTitle}
+            isExportPreviewOpen={isExportPreviewOpen}
+            onToggleExportPreview={() => setIsExportPreviewOpen((prev) => !prev)}
           />
 
           {/* Main Pale Blue-Grey Workspace & Layers Sidebar */}
@@ -1845,6 +1911,19 @@ export default function App() {
             onSaveToGallery={handleSaveToGallery}
             onOpenGallery={() => setIsGalleryModalOpen(true)}
             canvasDimensions={canvasDimensions}
+          />
+
+          {/* Live Export Preview Modal (toggled from Save ribbon tab) */}
+          <ExportPreviewModal
+            isOpen={isExportPreviewOpen}
+            onClose={() => setIsExportPreviewOpen(false)}
+            strokes={strokes}
+            layers={layers}
+            activeTemplate={activeTemplate}
+            templateOpacity={templateOpacity}
+            canvasDimensions={canvasDimensions}
+            defaultTitle={currentCloudArtworkTitle}
+            onDownloadComplete={(filename) => showToast(`Exported ${filename}`)}
           />
 
           {/* Session Gallery Modal */}

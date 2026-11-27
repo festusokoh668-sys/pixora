@@ -81,6 +81,11 @@ import {
   hasHorizontalSymmetryGuide,
   hasVerticalSymmetryGuide,
 } from '../utils/symmetryGuides';
+import {
+  createLayerFilterStroke,
+  formatFilterHistoryLabel,
+  hasDrawableContentOnLayer,
+} from '../utils/filterHistory';
 
 export interface CanvasStudioHandle {
   cutSelection: () => void;
@@ -328,6 +333,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
     const belowLayersCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const activeLayerCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const aboveLayersCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const filterScratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
     const setZoomLevel = useCallback(
       (nextOrUpdater: number | ((prev: number) => number)) => {
@@ -619,10 +625,40 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         if (layerTempCtx) {
           resetBuf(layerTempCtx, canvas.width, canvas.height);
           for (const stroke of layerStrokes) {
+            if (stroke.operation === 'layer-filter') {
+              if (stroke.filterEnabled !== false && stroke.filterType) {
+                const scratch = ensureBuffer(filterScratchCanvasRef);
+                const scratchCtx = scratch.getContext('2d', { willReadFrequently: true });
+                if (scratchCtx) {
+                  resetBuf(scratchCtx, canvas.width, canvas.height);
+                  scratchCtx.drawImage(layerTempCanvas, 0, 0);
+                  applyLayerFilterToContext(
+                    layerTempCtx,
+                    scratch,
+                    canvas.width,
+                    canvas.height,
+                    stroke.filterType,
+                    {
+                      brightnessDelta: stroke.filterBrightnessDelta,
+                      opaquePaperBackground: stroke.filterOpaquePaperBackground,
+                    }
+                  );
+                }
+              }
+              continue;
+            }
             drawStroke(layerTempCtx, stroke);
           }
 
-          if (layerStrokes.length > 0) {
+          const layerHasVisibleContent = layerStrokes.some(
+            (s) =>
+              s.operation !== 'layer-filter' ||
+              (s.filterEnabled !== false &&
+                s.filterType === 'invert' &&
+                Boolean(s.filterOpaquePaperBackground))
+          );
+
+          if (layerHasVisibleContent) {
             anyVisibleInk = true;
             strokesCtx.save();
             strokesCtx.globalAlpha = layer.opacity;
@@ -633,13 +669,13 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
           if (i === activeIdx && activeCtx) {
             activeCtx.drawImage(layerTempCanvas, 0, 0);
-          } else if (i < activeIdx && belowCtx && layerStrokes.length > 0) {
+          } else if (i < activeIdx && belowCtx && layerHasVisibleContent) {
             belowCtx.save();
             belowCtx.globalAlpha = layer.opacity;
             belowCtx.globalCompositeOperation = 'source-over';
             belowCtx.drawImage(layerTempCanvas, 0, 0);
             belowCtx.restore();
-          } else if (i > activeIdx && aboveCtx && layerStrokes.length > 0) {
+          } else if (i > activeIdx && aboveCtx && layerHasVisibleContent) {
             aboveCtx.save();
             aboveCtx.globalAlpha = layer.opacity;
             aboveCtx.globalCompositeOperation = 'source-over';
@@ -902,13 +938,13 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
 
     const applyLayerPixelFilter = useCallback(
       (filter: LayerFilterType, options?: LayerFilterOptions) => {
-        const width = canvasDimensions.width;
-        const height = canvasDimensions.height;
-        const activeLayerStrokes = strokes.filter(
-          (s) => resolveStrokeLayerId(s, effectiveLayers) === effectiveActiveLayerId
+        const hasLayerContent = hasDrawableContentOnLayer(
+          strokes,
+          effectiveLayers,
+          effectiveActiveLayerId
         );
 
-        if (activeLayerStrokes.length === 0 && (filter !== 'invert' || Boolean(activeTemplate))) {
+        if (!hasLayerContent && (filter !== 'invert' || Boolean(activeTemplate))) {
           onNotify?.(`Draw something on ${effectiveActiveLayer.name} before applying a filter`);
           return;
         }
@@ -922,71 +958,22 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           return;
         }
 
-        let sourceLayerCanvas = activeLayerCanvasRef.current;
-        if (
-          !sourceLayerCanvas ||
-          !effectiveActiveLayer.visible ||
-          sourceLayerCanvas.width !== width ||
-          sourceLayerCanvas.height !== height
-        ) {
-          sourceLayerCanvas = document.createElement('canvas');
-          sourceLayerCanvas.width = width;
-          sourceLayerCanvas.height = height;
-          const sctx = sourceLayerCanvas.getContext('2d', { willReadFrequently: true });
-          if (sctx) {
-            for (const s of activeLayerStrokes) {
-              renderStrokeToContext(sctx, s, 'canvas');
-            }
-          }
-        }
-
-        const filteredCanvas = document.createElement('canvas');
-        filteredCanvas.width = width;
-        filteredCanvas.height = height;
-        const fctx = filteredCanvas.getContext('2d', { willReadFrequently: true });
-        if (!fctx) return;
-
-        applyLayerFilterToContext(fctx, sourceLayerCanvas, width, height, filter, {
+        const filterOp = createLayerFilterStroke({
+          layerId: effectiveActiveLayerId,
+          layerName: effectiveActiveLayer.name,
+          filter,
+          brightnessDelta,
           opaquePaperBackground:
             filter === 'invert' && !activeTemplate && effectiveLayers[0]?.id === effectiveActiveLayerId,
-          brightnessDelta,
         });
 
-        const filteredDataUrl = filteredCanvas.toDataURL('image/png');
-        const spec = getLayerFilterSpec(filter);
-        const filterOp: Stroke = {
-          id: `op_filter_${filter}_${Date.now()}`,
-          layerId: effectiveActiveLayerId,
-          tool: 'select',
-          color: '#000000',
-          size: 1,
-          opacity: 1,
-          points: [],
-          operation: 'replace-bitmap',
-          rect: { x: 0, y: 0, width, height },
-          rasterDataUrl: filteredDataUrl,
-        };
-
-        const commitFiltered = () => {
-          const otherLayerStrokes = strokes.filter(
-            (s) => resolveStrokeLayerId(s, effectiveLayers) !== effectiveActiveLayerId
-          );
-          onStrokesChange([...otherLayerStrokes, filterOp]);
-          const detail =
-            filter === 'brightness' && brightnessDelta !== undefined
-              ? ` (${brightnessDelta > 0 ? `+${brightnessDelta}` : brightnessDelta}%)`
-              : '';
-          onNotify?.(`Applied ${spec.label}${detail} filter to ${effectiveActiveLayer.name}`);
-        };
-
-        const preloaded = preloadStrokeRasterImage(filteredDataUrl, commitFiltered);
-        if (preloaded && preloaded.complete && preloaded.naturalWidth > 0) {
-          commitFiltered();
-        }
+        onStrokesChange([...strokes, filterOp]);
+        onNotify?.(
+          `Applied ${formatFilterHistoryLabel(filter, brightnessDelta)} filter to ${effectiveActiveLayer.name}`
+        );
       },
       [
         activeTemplate,
-        canvasDimensions,
         effectiveActiveLayer,
         effectiveActiveLayerId,
         effectiveLayers,

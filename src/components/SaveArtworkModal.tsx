@@ -18,7 +18,8 @@ import {
   exportStrokesToSvgString,
   getContainDrawRect,
 } from '../utils/drawing';
-import { getVisibleOrderedStrokes } from '../utils/layers';
+import { createInitialLayers, getVisibleOrderedStrokes } from '../utils/layers';
+import { renderLayeredArtworkToContext } from '../utils/filterHistory';
 import { getSafeShareUrl } from '../utils/color';
 
 interface SaveArtworkModalProps {
@@ -121,10 +122,16 @@ export const SaveArtworkModal: React.FC<SaveArtworkModalProps> = ({
       ctx.restore();
     }
 
-    // Render all visible strokes in layer z-order
-    for (const stroke of orderedStrokes) {
-      renderStrokeToContext(ctx, stroke, 'export');
-    }
+    // Render all visible layers and active non-destructive filters in z-order
+    const safeLayers = layers && layers.length > 0 ? layers : createInitialLayers();
+    renderLayeredArtworkToContext(
+      ctx,
+      strokes,
+      safeLayers,
+      baseW,
+      baseH,
+      (targetCtx, stroke) => renderStrokeToContext(targetCtx, stroke, 'export')
+    );
 
     // Artist watermark in the bottom corner
     ctx.save();

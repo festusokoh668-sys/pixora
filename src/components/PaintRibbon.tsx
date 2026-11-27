@@ -31,11 +31,15 @@ import {
   CloudUpload,
   FolderHeart,
   User as UserIcon,
+  Eye,
+  Undo2,
+  History,
 } from 'lucide-react';
 import type { User } from 'firebase/auth';
 import { ThemeMode, getThemeToggleIcon } from '../utils/theme';
 import {
   DrawingTemplate,
+  FilterHistoryEntry,
   LayerFilterType,
   MirrorMode,
   ShapeFillStyle,
@@ -66,8 +70,8 @@ import {
 } from '../utils/symmetryGuides';
 
 export interface PaintRibbonProps {
-  activeTab: 'file' | 'home' | 'view';
-  onTabChange: (tab: 'file' | 'home' | 'view') => void;
+  activeTab: 'file' | 'home' | 'view' | 'save';
+  onTabChange: (tab: 'file' | 'home' | 'view' | 'save') => void;
   currentTool: ToolType;
   onToolSelect: (tool: ToolType) => void;
   stampShape?: StampShape;
@@ -157,6 +161,9 @@ export interface PaintRibbonProps {
   onApplyGrayscale?: () => void;
   onApplySepia?: () => void;
   onApplyBrightness?: (delta: number) => void;
+  filterHistory?: FilterHistoryEntry[];
+  onToggleFilterHistory?: (filterId: string) => void;
+  onUndoFilterHistory?: (filterId: string) => void;
   themeMode?: ThemeMode;
   onToggleTheme?: () => void;
   onShare?: () => void;
@@ -168,6 +175,8 @@ export interface PaintRibbonProps {
   onOpenStudioGallery?: () => void;
   hasUnsavedChanges?: boolean;
   currentArtworkTitle?: string;
+  isExportPreviewOpen?: boolean;
+  onToggleExportPreview?: () => void;
 }
 
 const WINDOWS_PAINT_PALETTE = [
@@ -278,6 +287,9 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onApplyGrayscale,
   onApplySepia,
   onApplyBrightness,
+  filterHistory = [],
+  onToggleFilterHistory,
+  onUndoFilterHistory,
   themeMode = 'light',
   onToggleTheme,
   onShare,
@@ -289,6 +301,8 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
   onOpenStudioGallery,
   hasUnsavedChanges = false,
   currentArtworkTitle,
+  isExportPreviewOpen = false,
+  onToggleExportPreview,
 }) => {
   const [activeDropdown, setActiveDropdown] = useState<
     | null
@@ -300,6 +314,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
     | 'outline'
     | 'fill'
     | 'size'
+    | 'filterHistory'
   >(null);
   const [activeColorSlot, setActiveColorSlot] = useState<1 | 2>(1);
   const [brightnessDelta, setBrightnessDelta] = useState<number>(25);
@@ -732,6 +747,24 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
           >
             View
           </button>
+
+          {/* Save Tab */}
+          <button
+            type="button"
+            data-testid="ribbon-tab-save"
+            onClick={() => {
+              onTabChange('save');
+              setActiveDropdown(null);
+              if (!isRibbonOpen) onToggleRibbon?.();
+            }}
+            className={`px-3.5 h-[23px] text-[12px] font-normal cursor-pointer ${
+              activeTab === 'save' && isRibbonOpen && activeDropdown !== 'file'
+                ? 'bg-[#F5F6F7] border-t border-x border-[#DADBDC] text-[#1E1E1E] -mb-px z-10'
+                : 'bg-white text-[#1E1E1E] hover:bg-[#F2F2F2]'
+            }`}
+          >
+            Save
+          </button>
         </div>
 
         {/* Right Tab-Bar Strip Controls: Quick Save, Share, Sparkle, Layers, Pin, Collapse (^), Theme, Help (?) (Circular & Professional) */}
@@ -1155,16 +1188,149 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
           data-testid="ribbon-toolbar-body"
           className="bg-[#F5F6F7] border-b border-[#DADBDC] h-[94px] px-1.5 py-1 flex items-stretch overflow-x-auto no-scrollbar"
         >
-          {activeTab === 'view' ? (
+          {activeTab === 'save' ? (
+            /* SAVE TAB CONTROLS */
+            <div className="flex items-stretch h-full" data-testid="ribbon-save-panel">
+              {/* Save & Library Group */}
+              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
+                <div className="flex items-center gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    data-testid="save-tab-save-artwork-btn"
+                    onClick={onSave}
+                    className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    title="Save editable artwork to IndexedDB & Cloud Firestore (Ctrl+S)"
+                  >
+                    <Save className="w-6 h-6 text-[#635BA2]" />
+                    <span className="text-[11px] leading-tight mt-0.5 text-center">Save<br />Artwork</span>
+                  </button>
+                  {onOpenCloudGallery && (
+                    <button
+                      type="button"
+                      data-testid="save-tab-my-artwork-btn"
+                      onClick={onOpenCloudGallery}
+                      className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                      title="Browse My Artwork library"
+                    >
+                      <FolderHeart className="w-6 h-6 text-[#D49B27]" />
+                      <span className="text-[11px] leading-tight mt-0.5 text-center">My<br />Artwork</span>
+                    </button>
+                  )}
+                </div>
+                <span className="text-[11px] text-[#666666] text-center leading-none">Project</span>
+              </div>
+
+              {/* Download & Export Group */}
+              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
+                <div className="flex items-center gap-1 pt-0.5">
+                  {onQuickSave && (
+                    <button
+                      type="button"
+                      data-testid="save-tab-quick-save-btn"
+                      disabled={isQuickSaving}
+                      onClick={onQuickSave}
+                      className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer disabled:opacity-50"
+                      title="Quick Save PNG (Ctrl+Shift+S)"
+                    >
+                      <Download className="w-6 h-6 text-[#1979CA]" />
+                      <span className="text-[11px] leading-tight mt-0.5 text-center">Quick<br />Save</span>
+                    </button>
+                  )}
+                  {onExportFormat && (
+                    <>
+                      <button
+                        type="button"
+                        data-testid="save-tab-export-png-btn"
+                        onClick={() => onExportFormat('png')}
+                        className="flex flex-col items-center px-1.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                        title="Download as PNG"
+                      >
+                        <FileImage className="w-5 h-5 my-0.5 text-[#1979CA]" />
+                        <span className="text-[11px] leading-tight mt-0.5 text-center">Export<br />PNG</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="save-tab-export-jpg-btn"
+                        onClick={() => onExportFormat('jpg')}
+                        className="flex flex-col items-center px-1.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                        title="Download as JPG"
+                      >
+                        <FileImage className="w-5 h-5 my-0.5 text-[#D97706]" />
+                        <span className="text-[11px] leading-tight mt-0.5 text-center">Export<br />JPG</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="save-tab-export-svg-btn"
+                        onClick={() => onExportFormat('svg')}
+                        className="flex flex-col items-center px-1.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                        title="Download as SVG"
+                      >
+                        <FileCode className="w-5 h-5 my-0.5 text-[#4F46E5]" />
+                        <span className="text-[11px] leading-tight mt-0.5 text-center">Export<br />SVG</span>
+                      </button>
+                    </>
+                  )}
+                  {onOpenExport && (
+                    <button
+                      type="button"
+                      data-testid="save-tab-highres-export-btn"
+                      onClick={onOpenExport}
+                      className="flex flex-col items-center px-2 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                      title="Open High-Res Export & Share Options"
+                    >
+                      <Share2 className="w-5 h-5 my-0.5 text-[#0F766E]" />
+                      <span className="text-[11px] leading-tight mt-0.5 text-center">High-Res<br />Export</span>
+                    </button>
+                  )}
+                </div>
+                <span className="text-[11px] text-[#666666] text-center leading-none">Download &amp; Export</span>
+              </div>
+
+              {/* Preview Group: Export Preview Toggle */}
+              <div className="flex flex-col justify-between h-full px-2 border-r border-[#E0E1E2] shrink-0">
+                <div className="flex items-center pt-0.5">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isExportPreviewOpen}
+                    data-testid="ribbon-export-preview-toggle"
+                    onClick={onToggleExportPreview}
+                    className={`flex items-center gap-2 px-2.5 py-1.5 border cursor-pointer transition-colors ${
+                      isExportPreviewOpen
+                        ? 'bg-[#D8E8FA] border-[#7DA2CE] text-[#0F2C4C]'
+                        : 'bg-white border-[#CBD5E1] hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[#1E1E1E]'
+                    }`}
+                    title="Toggle live modal preview of the final exported image before downloading"
+                  >
+                    <Eye className={`w-5 h-5 shrink-0 ${isExportPreviewOpen ? 'text-[#1979CA]' : 'text-[#475569]'}`} />
+                    <div className="flex flex-col items-start text-left">
+                      <span className="text-[11.5px] font-semibold leading-tight">Export Preview</span>
+                      <span className="text-[10px] text-[#555555] leading-tight">
+                        {isExportPreviewOpen ? 'Live modal open' : 'Inspect before download'}
+                      </span>
+                    </div>
+                    <span
+                      className={`ml-1 w-8 h-4 rounded-full p-0.5 flex items-center transition-colors ${
+                        isExportPreviewOpen ? 'bg-[#1979CA] justify-end' : 'bg-[#CBD5E1] justify-start'
+                      }`}
+                    >
+                      <span className="w-3 h-3 rounded-full bg-white shadow-xs block" />
+                    </span>
+                  </button>
+                </div>
+                <span className="text-[11px] text-[#666666] text-center leading-none">Preview</span>
+              </div>
+            </div>
+          ) : activeTab === 'view' ? (
             /* VIEW TAB CONTROLS */
             <div className="flex items-stretch h-full">
               {/* Zoom Group */}
-              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
+              <div className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0">
                 <div className="flex items-center gap-0.5 pt-0.5">
                   <button
                     type="button"
                     onClick={onZoomIn}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="Zoom in (Ctrl++)"
                   >
                     <ZoomIn className="w-6 h-6 text-[#1979CA]" />
@@ -1173,7 +1339,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                   <button
                     type="button"
                     onClick={onZoomOut}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="Zoom out (Ctrl+-)"
                   >
                     <ZoomOut className="w-6 h-6 text-[#1979CA]" />
@@ -1182,7 +1348,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                   <button
                     type="button"
                     onClick={onResetZoom}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="100% actual pixel size (Ctrl+0)"
                   >
                     <span className="w-6 h-6 flex items-center justify-center font-bold text-[#1979CA] text-[12px]">
@@ -1193,7 +1359,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                   <button
                     type="button"
                     onClick={onFitToWindow}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="Fit canvas to window"
                   >
                     <Maximize2 className="w-5 h-5 my-0.5 text-[#555]" />
@@ -1204,8 +1370,8 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* Show or hide Group */}
-              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
-                <div className="grid grid-cols-3 gap-x-1.5 gap-y-1.5 pt-1.5 text-[11px]">
+              <div className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0">
+                <div className="grid grid-cols-3 gap-x-1 gap-y-1.5 pt-1.5 text-[11px]">
                   <label className="flex items-center gap-1 cursor-pointer" title="Show or hide pixel rulers (Alt+R)">
                     <input
                       type="checkbox"
@@ -1283,7 +1449,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               </div>
 
               {/* Display Group */}
-              <div className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0">
+              <div className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0">
                 <div className="flex items-center gap-0.5 pt-0.5">
                   <button
                     type="button"
@@ -1291,7 +1457,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     aria-label="Grid Overlay"
                     aria-pressed={showGrid}
                     onClick={onToggleGrid}
-                    className={`flex flex-col items-center px-1 py-1 border cursor-pointer ${
+                    className={`flex flex-col items-center px-0.5 py-1 border cursor-pointer ${
                       showGrid
                         ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                         : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
@@ -1304,7 +1470,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                   <button
                     type="button"
                     onClick={onToggleFullScreen}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="Full screen (F11)"
                   >
                     <Maximize className="w-6 h-6 text-[#1979CA]" />
@@ -1317,7 +1483,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               {/* Flip Canvas Group (Horizontal & Vertical) */}
               <div
                 data-testid="view-flip-group"
-                className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0"
+                className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0"
               >
                 <div className="flex items-center gap-0.5 pt-0.5">
                   <button
@@ -1325,7 +1491,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     data-testid="view-flip-horizontal-btn"
                     aria-label="Flip Horizontal"
                     onClick={() => onFlipHorizontal?.()}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="Flip canvas horizontally (Ctrl+F)"
                   >
                     <FlipHorizontal className="w-6 h-6 text-[#1979CA]" />
@@ -1339,7 +1505,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     data-testid="view-flip-vertical-btn"
                     aria-label="Flip Vertical"
                     onClick={() => onFlipVertical?.()}
-                    className="flex flex-col items-center px-1 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
+                    className="flex flex-col items-center px-0.5 py-1 hover:bg-[#E5F1FB] border border-transparent hover:border-[#A0C5E8] cursor-pointer"
                     title="Flip canvas vertically (Ctrl+Shift+F)"
                   >
                     <FlipVertical className="w-6 h-6 text-[#1979CA]" />
@@ -1357,7 +1523,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               {(onMirrorModeChange || onMirrorHorizontal || onMirrorVertical) && (
                 <div
                   data-testid="view-symmetry-group"
-                  className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0"
+                  className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0"
                 >
                   <div className="flex items-center gap-0.5 pt-0.5">
                     <button
@@ -1370,7 +1536,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           resolveSymmetryToggle(mirrorMode, lastSymmetryAxisRef.current)
                         )
                       }
-                      className={`flex flex-col items-center px-1 py-1 border text-[11px] cursor-pointer ${
+                      className={`flex flex-col items-center px-0.5 py-1 border text-[11px] cursor-pointer ${
                         mirrorMode !== 'none'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
@@ -1416,7 +1582,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           ? onMirrorHorizontal()
                           : onMirrorModeChange?.(toggleMirrorAxis(mirrorMode, 'horizontal'))
                       }
-                      className={`flex flex-col items-center px-1 py-1 border cursor-pointer ${
+                      className={`flex flex-col items-center px-0.5 py-1 border cursor-pointer ${
                         mirrorMode === 'horizontal' || mirrorMode === 'quad'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
@@ -1440,7 +1606,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                           ? onMirrorVertical()
                           : onMirrorModeChange?.(toggleMirrorAxis(mirrorMode, 'vertical'))
                       }
-                      className={`flex flex-col items-center px-1 py-1 border cursor-pointer ${
+                      className={`flex flex-col items-center px-0.5 py-1 border cursor-pointer ${
                         mirrorMode === 'vertical' || mirrorMode === 'quad'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
@@ -1462,7 +1628,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       onClick={() =>
                         onMirrorModeChange?.(mirrorMode === 'quad' ? 'none' : 'quad')
                       }
-                      className={`flex flex-col items-center px-1 py-1 border text-[11px] cursor-pointer ${
+                      className={`flex flex-col items-center px-0.5 py-1 border text-[11px] cursor-pointer ${
                         mirrorMode === 'quad'
                           ? 'bg-[#D8E8FA] border-[#7DA2CE]'
                           : 'border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8]'
@@ -1476,7 +1642,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     {onSymmetryGuidesChange && (
                       <div
                         data-testid="ribbon-symmetry-guides-group"
-                        className={`w-[88px] h-[56px] px-1 py-0.5 border flex flex-col justify-between items-center ml-0.5 ${
+                        className={`w-[80px] h-[56px] px-1 py-0.5 border flex flex-col justify-between items-center ml-0.5 ${
                           symmetryGuides !== 'none'
                             ? 'bg-[#EAF7F5] border-[#0D9488]'
                             : 'bg-[#F8FAFC] border-[#DADBDC]'
@@ -1572,16 +1738,16 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               {(onApplyFilter || onApplyGrayscale || onApplySepia || onApplyBrightness) && (
                 <div
                   data-testid="view-filters-group"
-                  className="flex flex-col justify-between h-full px-1.5 border-r border-[#E0E1E2] shrink-0"
+                  className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0"
                 >
-                  <div className="flex items-center gap-1 pt-0.5">
+                  <div className="flex items-center gap-0.5 pt-0.5">
                     <button
                       type="button"
                       data-testid="ribbon-filter-grayscale-btn"
                       onClick={() =>
                         onApplyGrayscale ? onApplyGrayscale() : onApplyFilter?.('grayscale')
                       }
-                      className="flex flex-col items-center px-1 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
+                      className="flex flex-col items-center px-0.5 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
                       title="Convert current layer pixel data to grayscale"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
@@ -1598,7 +1764,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                       onClick={() =>
                         onApplySepia ? onApplySepia() : onApplyFilter?.('sepia')
                       }
-                      className="flex flex-col items-center px-1 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
+                      className="flex flex-col items-center px-0.5 py-1 border border-transparent hover:bg-[#E5F1FB] hover:border-[#A0C5E8] text-[11px] cursor-pointer"
                       title="Apply warm sepia tone to current layer pixel data"
                     >
                       <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none">
@@ -1612,7 +1778,7 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                     {/* Brightness Pixel Adjustment Control */}
                     <div
                       data-testid="ribbon-filter-brightness-control"
-                      className="w-[110px] px-1.5 py-1 border border-[#DADBDC] bg-[#F8FAFC] flex flex-col justify-center gap-0.5"
+                      className="w-[100px] px-1 py-1 border border-[#DADBDC] bg-[#F8FAFC] flex flex-col justify-center gap-0.5"
                       title="Adjust brightness of current layer pixel data"
                     >
                       <div className="flex items-center justify-between gap-1 leading-none">
@@ -1731,6 +1897,183 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
                   <span className="text-[11px] text-[#666666] text-center leading-none">Filters</span>
                 </div>
               )}
+
+              {/* Filter History Log Group */}
+              <div
+                data-testid="view-filter-history-group"
+                className="flex flex-col justify-between h-full px-1 border-r border-[#E0E1E2] shrink-0 w-[238px] relative"
+              >
+                <div className="flex-1 min-h-0 flex flex-col gap-0.5 pt-0.5">
+                  <div className="flex items-center justify-between px-0.5 text-[10px] leading-none text-[#555555]">
+                    <span className="flex items-center gap-1 font-medium text-[#1E1E1E]">
+                      <History className="w-3 h-3 text-[#1979CA]" />
+                      <span data-testid="filter-history-count">
+                        {filterHistory.length === 0
+                          ? '0 applied'
+                          : `${filterHistory.filter((f) => f.enabled).length}/${filterHistory.length} active`}
+                      </span>
+                    </span>
+                    {filterHistory.length > 2 && (
+                      <button
+                        type="button"
+                        data-testid="filter-history-expand-btn"
+                        onClick={() =>
+                          setActiveDropdown(
+                            activeDropdown === 'filterHistory' ? null : 'filterHistory'
+                          )
+                        }
+                        aria-expanded={activeDropdown === 'filterHistory'}
+                        aria-label="Expand Filter History log"
+                        className="text-[9.5px] font-medium text-[#1979CA] hover:underline cursor-pointer flex items-center gap-0.5"
+                      >
+                        <span>All ({filterHistory.length})</span>
+                        <ChevronDown className="w-2.5 h-2.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div
+                    data-testid="filter-history-list"
+                    className="flex-1 min-h-0 overflow-y-auto border border-[#DADBDC] bg-white px-1 py-0.5 space-y-0.5"
+                  >
+                    {filterHistory.length === 0 ? (
+                      <div
+                        data-testid="filter-history-empty"
+                        className="h-full flex items-center justify-center text-[10.5px] text-[#777777] text-center px-1"
+                      >
+                        No filters applied yet
+                      </div>
+                    ) : (
+                      filterHistory.map((entry) => (
+                        <div
+                          key={entry.id}
+                          data-testid={`filter-history-item-${entry.id}`}
+                          data-enabled={entry.enabled ? 'true' : 'false'}
+                          className={`flex items-center justify-between gap-1 px-1 py-0.5 border text-[10.5px] leading-tight ${
+                            entry.enabled
+                              ? 'bg-[#F8FAFC] border-[#DADBDC] text-[#1E1E1E]'
+                              : 'bg-[#ECEEF1] border-[#DADBDC] text-[#777777] opacity-80'
+                          }`}
+                        >
+                          <label
+                            className="flex items-center gap-1 min-w-0 flex-1 cursor-pointer select-none"
+                            title={
+                              entry.enabled
+                                ? `Bypass ${entry.label} on ${entry.layerName}`
+                                : `Re-enable ${entry.label} on ${entry.layerName}`
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              data-testid={`filter-history-toggle-${entry.id}`}
+                              checked={entry.enabled}
+                              onChange={() => onToggleFilterHistory?.(entry.id)}
+                              aria-label={`Toggle ${entry.label} on ${entry.layerName}`}
+                              className="w-3 h-3 accent-[#1979CA] shrink-0 cursor-pointer"
+                            />
+                            <span
+                              className={`w-2 h-2 rounded-[2px] shrink-0 border border-black/15 ${
+                                entry.filter === 'grayscale'
+                                  ? 'bg-[#7F7F7F]'
+                                  : entry.filter === 'sepia'
+                                  ? 'bg-[#9E6E3B]'
+                                  : entry.filter === 'brightness'
+                                  ? 'bg-[#F5B324]'
+                                  : 'bg-[#1E1E1E]'
+                              }`}
+                              aria-hidden="true"
+                            />
+                            <span
+                              className={`truncate font-medium ${
+                                entry.enabled ? 'text-[#1E1E1E]' : 'line-through text-[#666666]'
+                              }`}
+                            >
+                              {entry.label}
+                            </span>
+                            <span className="text-[9.5px] text-[#666666] truncate max-w-[46px] shrink-0">
+                              · {entry.layerName}
+                            </span>
+                          </label>
+
+                          <button
+                            type="button"
+                            data-testid={`filter-history-undo-${entry.id}`}
+                            onClick={() => onUndoFilterHistory?.(entry.id)}
+                            aria-label={`Undo ${entry.label} on ${entry.layerName}`}
+                            title={`Undo ${entry.label} filter`}
+                            className="px-1 py-0.5 border border-transparent hover:bg-[#FEE2E2] hover:border-[#FCA5A5] text-[#555555] hover:text-[#B91C1C] flex items-center gap-0.5 text-[9.5px] shrink-0 cursor-pointer"
+                          >
+                            <Undo2 className="w-3 h-3" />
+                            <span>Undo</span>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {activeDropdown === 'filterHistory' && filterHistory.length > 0 && (
+                  <div
+                    data-testid="filter-history-expanded-popover"
+                    className="fixed mt-[72px] z-50 w-[290px] max-h-[260px] overflow-y-auto bg-white border border-[#A0A0A0] shadow-lg p-1.5 space-y-1 text-[11px]"
+                  >
+                    <div className="flex items-center justify-between px-1 pb-1 border-b border-[#E0E1E2] text-[10.5px] font-semibold text-[#1E1E1E]">
+                      <span>Filter History ({filterHistory.length})</span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveDropdown(null)}
+                        aria-label="Close expanded Filter History"
+                        className="p-0.5 hover:bg-[#E5F1FB] cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {filterHistory.map((entry) => (
+                      <div
+                        key={`pop_${entry.id}`}
+                        className={`flex items-center justify-between gap-1.5 px-1.5 py-1 border text-[11px] ${
+                          entry.enabled
+                            ? 'bg-[#F8FAFC] border-[#DADBDC] text-[#1E1E1E]'
+                            : 'bg-[#ECEEF1] border-[#DADBDC] text-[#777777] opacity-80'
+                        }`}
+                      >
+                        <label className="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={entry.enabled}
+                            onChange={() => onToggleFilterHistory?.(entry.id)}
+                            aria-label={`Popover toggle ${entry.label} on ${entry.layerName}`}
+                            className="w-3.5 h-3.5 accent-[#1979CA] shrink-0 cursor-pointer"
+                          />
+                          <span
+                            className={`truncate font-medium ${
+                              entry.enabled ? 'text-[#1E1E1E]' : 'line-through text-[#666666]'
+                            }`}
+                          >
+                            {entry.label}
+                          </span>
+                          <span className="text-[10px] text-[#666666] shrink-0">
+                            · {entry.layerName}
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => onUndoFilterHistory?.(entry.id)}
+                          aria-label={`Popover undo ${entry.label} on ${entry.layerName}`}
+                          className="px-1.5 py-0.5 border border-transparent hover:bg-[#FEE2E2] hover:border-[#FCA5A5] text-[#555555] hover:text-[#B91C1C] flex items-center gap-0.5 text-[10px] shrink-0 cursor-pointer"
+                        >
+                          <Undo2 className="w-3 h-3" />
+                          <span>Undo</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <span className="text-[11px] text-[#666666] text-center leading-none pt-0.5">
+                  Filter History
+                </span>
+              </div>
             </div>
           ) : (
             /* HOME RIBBON TOOLBAR — Exact Screenshot Group Order */

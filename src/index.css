@@ -300,7 +300,8 @@ html.theme-dark body {
 
 /* Active ribbon tab blends cleanly with toolbar body */
 .theme-dark [data-testid="paint-ribbon"] [data-testid="ribbon-tab-home"][class*="bg-[#F5F6F7]"],
-.theme-dark [data-testid="paint-ribbon"] [data-testid="ribbon-tab-view"][class*="bg-[#F5F6F7]"] {
+.theme-dark [data-testid="paint-ribbon"] [data-testid="ribbon-tab-view"][class*="bg-[#F5F6F7]"],
+.theme-dark [data-testid="paint-ribbon"] [data-testid="ribbon-tab-save"][class*="bg-[#F5F6F7]"] {
   background-color: #202530 !important;
   color: #FFFFFF !important;
   border-color: #2F3748 !important;
