@@ -1943,7 +1943,19 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
           }
           continue;
         }
-        rawPointerBufferRef.current.push(rawSample);
+        // Adapt stabilization to pointer speed: slow sketching keeps jitter reduction,
+        // while fast mouse/finger/stylus movement follows the actual pointer immediately.
+        const previousRaw = rawPointerBufferRef.current[rawPointerBufferRef.current.length - 1];
+        const elapsedMs = previousRaw
+          ? Math.max(1, ev.timeStamp - (previousRaw as Point & { timeStamp?: number }).timeStamp!)
+          : 1;
+        const travel = previousRaw
+          ? Math.hypot(rawSample.x - previousRaw.x, rawSample.y - previousRaw.y)
+          : 0;
+        const speed = travel / elapsedMs;
+        const speedFactor = Math.max(0, Math.min(1, speed / 0.8));
+        const adaptiveStabilization = Math.round(stabilization * (1 - speedFactor));
+        rawPointerBufferRef.current.push({ ...rawSample, timeStamp: ev.timeStamp } as Point);
         if (rawPointerBufferRef.current.length > 24) {
           rawPointerBufferRef.current.shift();
         }
@@ -1951,7 +1963,7 @@ export const CanvasStudio = forwardRef<CanvasStudioHandle, CanvasStudioProps>(
         const stabilized = stabilizeCursorStream(
           rawPointerBufferRef.current,
           last,
-          stabilization
+          adaptiveStabilization
         );
         if (stabilized) {
           points.push(stabilized);
