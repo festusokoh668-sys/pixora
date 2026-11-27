@@ -27,6 +27,7 @@ import {
   Moon,
   Sun,
   Share2,
+  Trash2,
   CloudUpload,
   FolderHeart,
   User as UserIcon,
@@ -752,6 +753,17 @@ export const PaintRibbon: React.FC<PaintRibbonProps> = ({
               <Download className="w-3.5 h-3.5" />
             </button>
           )}
+
+          <button
+            type="button"
+            data-testid="ribbon-clear-drawing-btn"
+            aria-label="Clear drawing and start a new one"
+            onClick={onNew}
+            className="w-6 h-6 rounded-full flex items-center justify-center border border-red-200 dark:border-red-900/60 bg-white dark:bg-[#1E232D] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 hover:border-red-400 transition-all active:scale-95 cursor-pointer shadow-2xs"
+            title="Clear drawing and start a new one"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
 
           {onShare && (
             <button
